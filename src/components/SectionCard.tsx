@@ -49,6 +49,17 @@ export function SectionCard({
   const isWriting = liveState === "writing" || pending;
   const isQueued = liveState === "pending";
 
+  /**
+   * "Regenerate" on a section that has never been generated is a lie about
+   * what the button does, and it appeared on every empty card — including
+   * while the page said generation was disabled. There is nothing to
+   * regenerate until there is something there.
+   *
+   * The one control that starts everything lives above the list instead.
+   */
+  const canRegenerate =
+    editable && !isTemplate && Boolean(section.content);
+
   function handleRegenerate() {
     setMessage(null);
     setFailed(false);
@@ -63,7 +74,7 @@ export function SectionCard({
   return (
     <article
       className={cn(
-        "card overflow-hidden transition-all duration-300",
+        "card group/section overflow-hidden transition-all duration-300",
         isWriting && "border-accent/30 shadow-md",
         isQueued && "opacity-55",
       )}
@@ -96,7 +107,7 @@ export function SectionCard({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          {!isTemplate && editable && (
+          {canRegenerate && (
             <>
               {section.regenerated_count > 0 && (
                 <div className="hidden items-center gap-1.5 sm:flex">
@@ -112,11 +123,20 @@ export function SectionCard({
                 </div>
               )}
 
+              {/*
+                Quiet by default — one of six identical buttons shouting for
+                attention is noise. It comes forward on hover, when the reader
+                has already decided this is the section they care about.
+              */}
               <button
                 type="button"
                 onClick={handleRegenerate}
                 disabled={isWriting || remaining <= 0}
-                className={buttonClass("secondary", "sm")}
+                className={cn(
+                  buttonClass("ghost", "sm"),
+                  "opacity-0 focus-visible:opacity-100 group-hover/section:opacity-100",
+                  isWriting && "opacity-100",
+                )}
                 title={
                   remaining <= 0
                     ? `Regenerated ${MAX_REGENERATIONS_PER_SECTION} times already`
@@ -174,10 +194,15 @@ export function SectionCard({
             {section.content}
           </div>
         ) : isQueued ? (
-          <p className="text-sm italic text-ink-subtle">Queued…</p>
+          <p className="flex items-center gap-1.5 text-sm text-ink-subtle">
+            <span className="h-1.5 w-1.5 rounded-full bg-ink-subtle" />
+            Waiting its turn
+          </p>
         ) : (
           <p className="text-sm italic text-ink-subtle">
-            Nothing here yet. Generate the proposal to fill this in.
+            {isTemplate
+              ? "Fill in the intake field above and this writes itself."
+              : "Not written yet."}
           </p>
         )}
       </div>

@@ -2,27 +2,24 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { loadDeliveries } from "@/app/actions/send";
-import { updateIntake } from "@/app/actions/proposals";
 import { AppShell } from "@/components/AppShell";
 import { ActivityTimeline } from "@/components/ActivityTimeline";
-import { IntakeForm } from "@/components/IntakeForm";
+import { IntakePanel } from "@/components/IntakePanel";
 import { MaterialList } from "@/components/MaterialList";
 import { MaterialUploader } from "@/components/MaterialUploader";
 import { ProposalWorkspace } from "@/components/ProposalWorkspace";
 import { SendPanel } from "@/components/SendPanel";
 import { StatusPill } from "@/components/StatusPill";
 import { WorkflowActions } from "@/components/WorkflowActions";
-import { Eyebrow, Icon, Note, buttonClass } from "@/components/ui/primitives";
+import { Icon, Note, buttonClass } from "@/components/ui/primitives";
 import { requireProfile } from "@/lib/auth";
 import { costOf } from "@/lib/constants";
 import { getServerClient } from "@/lib/db/server";
-import {
-  INTAKE_FIELD_KEYS,
-  INTAKE_FIELD_LABELS,
-  type ActivityLogEntry,
-  type Proposal,
-  type ProposalSection,
-  type SupportingMaterial,
+import type {
+  ActivityLogEntry,
+  Proposal,
+  ProposalSection,
+  SupportingMaterial,
 } from "@/lib/db/types";
 import { resolveRecipient } from "@/lib/env";
 import { assessReadiness } from "@/lib/policy/fields";
@@ -196,7 +193,13 @@ export default async function ProposalEditorPage({
           </div>
         )}
 
-      <div className="mt-10">
+      {/*
+        Two columns. The document is the work, so it takes the width; the
+        inputs that feed it stay visible beside it rather than sitting below
+        the fold, where the thing that unblocks the page was the last thing
+        anyone found.
+      */}
+      <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_20rem] lg:items-start">
         <ProposalWorkspace
           proposalId={id}
           sections={sections}
@@ -205,74 +208,49 @@ export default async function ProposalEditorPage({
           warnings={readiness.warnings}
           spend={spend}
         />
-      </div>
 
-      {(editable || materials.length > 0) && (
-        <section className="mt-10">
-          <Eyebrow>Supporting materials</Eyebrow>
-          {editable && (
-            <div className="mt-3">
-              <MaterialUploader proposalId={id} />
-            </div>
+        <aside className="space-y-4 lg:sticky lg:top-20">
+          <IntakePanel proposal={proposal} editable={editable} />
+
+          {(editable || materials.length > 0) && (
+            <section className="card overflow-hidden">
+              <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+                <h2 className="text-sm font-semibold text-ink">
+                  Supporting materials
+                </h2>
+                <span className="text-2xs text-ink-subtle tabular">
+                  {materials.filter((m) => m.summarized).length} used
+                </span>
+              </header>
+
+              <div className="space-y-3 p-4">
+                {materials.length > 0 && (
+                  <MaterialList materials={materials} editable={editable} />
+                )}
+                {editable && <MaterialUploader proposalId={id} />}
+              </div>
+            </section>
           )}
-          <div className="mt-4">
-            <MaterialList materials={materials} editable={editable} />
-          </div>
-        </section>
-      )}
 
-      <section id="intake" className="mt-10 scroll-mt-20">
-        <Eyebrow>What the salesperson recorded</Eyebrow>
-        <p className="mt-1 text-sm text-ink-muted">
-          These go into the document exactly as typed. Changing one marks any
-          section written before the change.
-        </p>
-
-        <div className="mt-4">
-          {editable ? (
-            <IntakeForm
-              action={updateIntake.bind(null, id)}
-              initial={proposal}
-              // Still shown here: knowing a value came from the notes rather
-              // than someone's memory is worth as much when revising as it was
-              // when confirming.
-              provenance={proposal.field_provenance}
-              submitLabel="Save intake"
-            />
-          ) : (
-            <IntakeReadOnly proposal={proposal} />
-          )}
-        </div>
-      </section>
-
-      <section className="mt-10">
-        <Eyebrow>Activity</Eyebrow>
-        <div className="mt-3">
-          <ActivityTimeline entries={activity} />
-        </div>
-      </section>
-    </AppShell>
-  );
-}
-
-function IntakeReadOnly({ proposal }: { proposal: Proposal }) {
-  return (
-    <dl className="card grid gap-x-6 gap-y-4 p-5 sm:grid-cols-2">
-      {INTAKE_FIELD_KEYS.map((field) => (
-        <div key={field}>
-          <dt className="text-2xs font-medium uppercase tracking-wide text-ink-subtle">
-            {INTAKE_FIELD_LABELS[field]}
-          </dt>
-          <dd className="mt-1 text-sm text-ink">
-            {proposal[field] ?? (
-              <span className="inline-flex items-center gap-1 italic text-ink-subtle">
-                <Icon name="alert" className="h-3 w-3" />
-                Not provided
+          {/* Collapsed by default. The audit trail matters, but it is
+              reference material — it should not push the intake off screen. */}
+          <details className="card group overflow-hidden">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+              <h2 className="text-sm font-semibold text-ink">Activity</h2>
+              <span className="flex items-center gap-1.5 text-2xs text-ink-subtle">
+                <span className="tabular">{activity.length}</span>
+                <Icon
+                  name="arrow-left"
+                  className="h-3 w-3 -rotate-90 transition-transform group-open:rotate-90"
+                />
               </span>
-            )}
-          </dd>
-        </div>
-      ))}
-    </dl>
+            </summary>
+            <div className="border-t border-line p-3">
+              <ActivityTimeline entries={activity} />
+            </div>
+          </details>
+        </aside>
+      </div>
+    </AppShell>
   );
 }

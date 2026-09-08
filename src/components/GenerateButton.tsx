@@ -100,17 +100,10 @@ export function GenerateButton({
 		startTransition(() => router.refresh());
 	}
 
-	if (isBlocked) {
-		return (
-			<Note tone="danger" title="Generation is disabled">
-				There is no proposal without{" "}
-				<span className="font-medium text-ink">
-					{blocking.map((g) => INTAKE_FIELD_LABELS[g.field]).join(", ")}
-				</span>
-				. Fill {blocking.length === 1 ? "it" : "them"} in below and generate.
-			</Note>
-		);
-	}
+	// The blocked state is rendered by ProposalWorkspace, attached to the
+	// control it blocks and carrying a link to the fix. Repeating it here would
+	// put the same message on screen twice, which is what the page did before.
+	if (isBlocked) return null;
 
 	if (confirming) {
 		return (

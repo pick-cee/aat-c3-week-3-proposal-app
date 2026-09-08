@@ -244,6 +244,11 @@ export async function confirmIntake(proposalId: string, formData: FormData) {
     throw new Error(`Could not save the intake: ${error.message}`);
   }
 
+  // This screen is now also how intake is EDITED after generation — the editor
+  // links here rather than carrying a second copy of the form. So a change made
+  // here has to mark sections stale exactly as `updateIntake` does, or drift
+  // would go unrecorded on whichever path the salesperson happened to take.
+  await markStaleAfterIntakeChange(proposalId, intake, actor.full_name);
   await rerenderTemplateSections(proposalId, intake);
 
   const confirmedCount = Object.keys(provenance).length;

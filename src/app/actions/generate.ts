@@ -139,6 +139,19 @@ export async function regenerateSection(
 ): Promise<{ ok: boolean; message?: string }> {
   const { actor, proposal } = await loadForGeneration(proposalId);
 
+  // The Block tier gates EVERY path to a model call, not just the full run.
+  // Without this, a page showing "Generation is disabled" still had a working
+  // Regenerate button on every section — the gate was on one route and the
+  // other went around it.
+  //
+  // `confirmedWarnings` is true because a section that already exists was
+  // generated under a confirmation the salesperson has given once; re-asking on
+  // every regeneration would be nagging, and the Warn tier has never blocked.
+  const readiness = assessReadiness(proposal, true);
+  if (!readiness.canGenerate) {
+    return { ok: false, message: readiness.reason! };
+  }
+
   const outcome = await runSectionGeneration(proposal, sectionKey, actor, true);
 
   if (outcome.ok) {

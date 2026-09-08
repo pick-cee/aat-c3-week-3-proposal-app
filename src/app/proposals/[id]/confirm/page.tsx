@@ -36,18 +36,40 @@ export default async function ConfirmPage({
 	const extractedCount = Object.keys(provenance).length;
 	const wasExtracted = extractedCount > 0 && manual !== "1";
 
+	// The editor links here to change intake, rather than carrying a second copy
+	// of the form. Once anything has been confirmed, this screen is an edit — and
+	// telling someone to "check what Claude found" on their third visit is
+	// wrong about what they are doing.
+	const alreadyConfirmed = Object.values(provenance).some((p) => p.confirmed);
+	const isRevisit =
+		alreadyConfirmed || Boolean(proposal.client_name && manual === "1");
+
 	const missing = INTAKE_FIELD_KEYS.filter(
 		(field) => !(proposal[field] ?? "").toString().trim(),
 	).length;
 
 	return (
-		<AppShell actor={actor} backTo={`/proposals/${id}/notes`} backLabel="Notes">
+		<AppShell
+			actor={actor}
+			backTo={isRevisit ? `/proposals/${id}` : `/proposals/${id}/notes`}
+			backLabel={isRevisit ? "Proposal" : "Notes"}
+		>
 			<div className="max-w-3xl">
 				<h1 className="text-3xl font-semibold tracking-tight text-ink">
-					{wasExtracted ? "Check what Claude found" : "Fill in the details"}
+					{isRevisit
+						? "Edit the details"
+						: wasExtracted
+							? "Check what Claude found"
+							: "Fill in the details"}
 				</h1>
 				<p className="mt-2 max-w-xl text-ink-muted">
-					{wasExtracted ? (
+					{isRevisit ? (
+						<>
+							These go into the document exactly as typed. Changing one marks
+							any section written before the change, so you can see what needs
+							rewriting.
+						</>
+					) : wasExtracted ? (
 						<>
 							Every value below is quoted from your notes — nothing was
 							inferred. Correct anything that is wrong, fill in what is missing,
@@ -61,7 +83,7 @@ export default async function ConfirmPage({
 					)}
 				</p>
 
-				{wasExtracted && (
+				{wasExtracted && !isRevisit && (
 					<div className="mt-6 flex flex-wrap gap-3">
 						<Stat
 							icon="check"
@@ -80,7 +102,7 @@ export default async function ConfirmPage({
 					</div>
 				)}
 
-				{wasExtracted && (
+				{wasExtracted && !isRevisit && (
 					<Note tone="info" className="mt-5">
 						<span className="flex items-start gap-2">
 							<Icon name="lock" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -93,7 +115,7 @@ export default async function ConfirmPage({
 					</Note>
 				)}
 
-				{!wasExtracted && proposal.raw_notes && (
+				{!wasExtracted && !isRevisit && proposal.raw_notes && (
 					<p className="mt-5 text-sm text-ink-muted">
 						Filling this in by hand.{" "}
 						<Link
@@ -110,9 +132,13 @@ export default async function ConfirmPage({
 					<IntakeForm
 						action={confirmIntake.bind(null, id)}
 						initial={proposal}
-						provenance={wasExtracted ? provenance : undefined}
+						provenance={provenance}
 						submitLabel={
-							wasExtracted ? "Confirm and continue" : "Save and continue"
+							isRevisit
+								? "Save changes"
+								: wasExtracted
+									? "Confirm and continue"
+									: "Save and continue"
 						}
 					/>
 				</div>
