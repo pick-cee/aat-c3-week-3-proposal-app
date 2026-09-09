@@ -76,6 +76,11 @@ export function IntakeForm({
   const readiness = assessReadiness(values, true);
   const blockingFields = new Set(readiness.blocking.map((g) => g.field));
 
+  /** What the current value in a field is, form state or initial. */
+  function currentValue(field: keyof IntakeFields): string {
+    return (values[field] ?? initial?.[field] ?? "").toString().trim();
+  }
+
   /**
    * A source phrase stops being shown the moment the value it justifies is
    * edited. Keeping it visible would attach a quotation to a number nobody
@@ -83,7 +88,7 @@ export function IntakeForm({
    */
   function sourceFor(field: keyof IntakeFields): string | null {
     const entry = provenance?.[field];
-    if (!entry) return null;
+    if (!entry || entry.reason) return null; // a reason explains an empty field
 
     const current = values[field];
     const original = initial?.[field];
@@ -93,6 +98,24 @@ export function IntakeForm({
     }
 
     return entry.source;
+  }
+
+  /**
+   * Why a field was left empty, when the notes came close.
+   *
+   * Only for partial support: a field the notes never mentioned shows nothing,
+   * because a reason under every empty input is noise and noise is how the one
+   * real explanation gets skipped. Disappears as soon as the field is filled —
+   * the question it answers has been answered.
+   */
+  function unfilledReason(
+    field: keyof IntakeFields,
+  ): { source: string; reason: string } | null {
+    const entry = provenance?.[field];
+    if (!entry?.reason) return null;
+    if (currentValue(field) !== "") return null;
+
+    return { source: entry.source, reason: entry.reason };
   }
 
   return (
@@ -173,6 +196,26 @@ export function IntakeForm({
                     <span className="italic">
                       &ldquo;{sourceFor(field)}&rdquo;
                     </span>
+                  </span>
+                </p>
+              )}
+
+              {/*
+                Why this one is empty, when the notes came close. An empty
+                field that was never discussed and one that was discussed
+                incompletely need different things from the salesperson —
+                without this they look identical.
+              */}
+              {unfilledReason(field) && (
+                <p className="mt-1.5 flex gap-1.5 text-xs text-ink-subtle animate-fade">
+                  <Icon name="alert" className="mt-px h-3 w-3 shrink-0" />
+                  <span>
+                    Notes mention{" "}
+                    <span className="italic">
+                      &ldquo;{unfilledReason(field)!.source}&rdquo;
+                    </span>{" "}
+                    but {unfilledReason(field)!.reason}, so this was not filled
+                    in.
                   </span>
                 </p>
               )}

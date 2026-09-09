@@ -3,7 +3,11 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { GenerateButton, type SectionProgress } from "@/components/GenerateButton";
+import {
+  GenerateButton,
+  type SectionProgress,
+  type SectionResults,
+} from "@/components/GenerateButton";
 import { SectionCard } from "@/components/SectionCard";
 import { Icon, Meter, cn } from "@/components/ui/primitives";
 import { INTAKE_FIELD_LABELS, type FieldGap, type ProposalSection } from "@/lib/db/types";
@@ -26,6 +30,8 @@ export function ProposalWorkspace({
   blocking,
   warnings,
   spend,
+  autoStart = false,
+  sectionFeedback,
 }: {
   proposalId: string;
   sections: ProposalSection[];
@@ -33,10 +39,40 @@ export function ProposalWorkspace({
   blocking: FieldGap[];
   warnings: FieldGap[];
   spend: number;
+  /** Begin writing on arrival — see the editor page. */
+  autoStart?: boolean;
+  /**
+   * What the approver said about each section, from the latest rejection.
+   * Shown on the card it concerns rather than as one banner the salesperson
+   * has to map onto the document by reading.
+   */
+  sectionFeedback?: Map<string, string>;
 }) {
   const [progress, setProgress] = useState<SectionProgress>({});
 
-  const written = sections.filter((s) => s.content).length;
+  /**
+   * Text that arrived during this run, before the server round-trip that would
+   * otherwise be the only way to see it. Cleared implicitly on navigation,
+   * because by then the database is the source of truth again.
+   */
+  const [live, setLive] = useState<SectionResults>({});
+
+  /**
+   * Progress counts only what Claude actually writes.
+   *
+   * Timeline and Pricing are rendered from intake the moment a proposal
+   * exists, so counting all six made a brand-new proposal read "2 of 6
+   * written" — and told the button to say "Regenerate all sections" before
+   * anything had been generated once.
+   */
+  const generated = sections.filter((s) => s.source === "generated");
+  // Counts what is on screen, which during a run includes text that has
+  // arrived but not yet been re-fetched.
+  const written = generated.filter(
+    (s) => s.content || live[s.section_key]?.content,
+  ).length;
+  const hasContent = written > 0;
+
   const isRunning = Object.values(progress).some((s) => s === "writing");
   const isBlocked = blocking.length > 0;
 
@@ -56,7 +92,7 @@ export function ProposalWorkspace({
             <div className="flex items-center gap-2.5">
               <h2 className="text-sm font-semibold text-ink">The proposal</h2>
               <span className="text-2xs text-ink-subtle tabular">
-                {written} of {sections.length} written
+                {written} of {generated.length} written
               </span>
               {spend > 0 && (
                 <span
@@ -70,11 +106,11 @@ export function ProposalWorkspace({
 
             <Meter
               value={written}
-              max={sections.length}
+              max={generated.length}
               tone={
                 isBlocked
                   ? "danger"
-                  : written === sections.length
+                  : written === generated.length
                     ? "positive"
                     : "neutral"
               }
@@ -87,8 +123,10 @@ export function ProposalWorkspace({
               proposalId={proposalId}
               blocking={blocking}
               warnings={warnings}
-              hasContent={written > 0}
+              hasContent={hasContent}
               onProgress={setProgress}
+              onResult={setLive}
+              autoStart={autoStart}
             />
           )}
         </div>
@@ -128,6 +166,9 @@ export function ProposalWorkspace({
             proposalId={proposalId}
             editable={editable}
             liveState={progress[section.section_key]}
+            liveContent={live[section.section_key]?.content}
+            liveWarnings={live[section.section_key]?.warnings}
+            approverNote={sectionFeedback?.get(section.section_key)}
           />
         ))}
       </div>

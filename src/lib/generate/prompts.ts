@@ -40,7 +40,9 @@ const BRIEFS: Record<Extract<SectionKey, "introduction" | "solution" | "delivera
   introduction: {
     instruction: `Write the opening section.
 
-Thank them for the conversation, show you understood their problem by restating it in your own words, and say what this document contains. Reference their actual situation — the specifics they described, not a generic summary.
+Open by addressing the client contact by name, exactly as it appears in "Client Name" above — this is a letter to a person, and a proposal that opens without naming them reads as a template. Name the company as written in "Company Name" too.
+
+Then thank them for the conversation, show you understood their problem by restating it in your own words, and say what this document contains. Reference their actual situation — the specifics they described, not a generic summary.
 
 Do not list deliverables, pricing or timeline here. Those have their own sections.`,
     target: 150,

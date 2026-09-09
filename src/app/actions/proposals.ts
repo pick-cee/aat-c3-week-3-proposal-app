@@ -10,7 +10,11 @@ import {
   type Proposal,
 } from "@/lib/db/types";
 import { RuleViolation } from "@/lib/errors";
-import { assertEditable, assertNotApproverEditing } from "@/lib/guards";
+import {
+  assertEditable,
+  assertNotApproverEditing,
+  editableStatusAfter,
+} from "@/lib/guards";
 import { intakeDrift, mergeStaleReasons } from "@/lib/policy/staleness";
 import { SECTION_DEFINITIONS } from "@/lib/sections";
 import { generateShareToken } from "@/lib/share-token";
@@ -31,13 +35,31 @@ function provenanceAfterEdit(
   before: Partial<IntakeFields>,
   after: IntakeFields,
   confirming: boolean,
-): Record<string, { source: string; confirmed: boolean }> {
-  const kept: Record<string, { source: string; confirmed: boolean }> = {};
+): Record<string, { source: string; confirmed: boolean; reason?: string }> {
+  const kept: Record<
+    string,
+    { source: string; confirmed: boolean; reason?: string }
+  > = {};
 
   for (const [field, entry] of Object.entries(existing ?? {})) {
     const key = field as keyof IntakeFields;
     const wasProposed = (before[key] ?? "").trim();
     const nowSubmitted = (after[key] ?? "").trim();
+
+    // An entry carrying a `reason` explains an EMPTY field, so it survives
+    // precisely while the field stays empty — the opposite condition to the
+    // one below. Filling the field in answers the question the reason asked,
+    // so the explanation goes.
+    if (entry.reason) {
+      if (nowSubmitted === "") {
+        kept[field] = {
+          source: entry.source,
+          reason: entry.reason,
+          confirmed: confirming || entry.confirmed,
+        };
+      }
+      continue;
+    }
 
     if (nowSubmitted === "" || nowSubmitted !== wasProposed) continue;
 
@@ -156,16 +178,15 @@ export async function updateIntake(proposalId: string, formData: FormData) {
 
   const proposal = existing as Proposal;
 
-  // `changes_requested` returns to draft on the first edit (rule 6).
-  if (proposal.status === "changes_requested") {
-    await db
-      .from("proposals")
-      .update({ status: "draft" })
-      .eq("id", proposalId);
-    proposal.status = "draft";
-  }
-
   assertEditable(proposal);
+
+  // `changes_requested` returns to draft on the first edit (rule 6). Uses the
+  // shared helper so all five edit paths make the same transition.
+  const nextStatus = editableStatusAfter(proposal);
+  if (nextStatus) {
+    await db.from("proposals").update({ status: nextStatus }).eq("id", proposalId);
+    proposal.status = nextStatus;
+  }
 
   const intake = intakeFromForm(formData);
 
@@ -226,6 +247,13 @@ export async function confirmIntake(proposalId: string, formData: FormData) {
 
   const proposal = existing as Proposal;
   assertEditable(proposal);
+
+  // The fifth edit path: the editor links here to change intake, so a
+  // rejection acted on from this screen returns to draft too.
+  const nextStatus = editableStatusAfter(proposal);
+  if (nextStatus) {
+    await db.from("proposals").update({ status: nextStatus }).eq("id", proposalId);
+  }
 
   const intake = intakeFromForm(formData);
   const provenance = provenanceAfterEdit(

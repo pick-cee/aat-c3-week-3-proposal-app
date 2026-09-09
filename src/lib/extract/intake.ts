@@ -16,6 +16,7 @@ import {
 import {
   verifyProposals,
   type ExtractedField,
+  type PartialSupport,
   type RawProposal,
 } from "./verify";
 
@@ -39,6 +40,21 @@ HEDGED LANGUAGE IS NOT A COMMITMENT
 
 A salesperson half-committing in their own notes has not committed. Reporting it as a value puts a number in front of a client that nobody agreed to. When in doubt, return null — an empty field costs someone thirty seconds; a wrong price costs a deal.
 
+WHEN THE SOURCE ALMOST GAVE YOU A VALUE, SAY SO
+
+Sometimes the notes touch a field without settling it: a date with no year, a figure with no currency, a duration hedged into meaninglessness. The value is still null — you do not fill the gap. But say why, so the salesperson knows the difference between "we never discussed this" and "we discussed it and it was incomplete". Those need different actions from them.
+
+Return null for the value, plus the quote that came close and a short reason:
+
+  "date_of_call": {"value": null, "source": "Call 14 Oct", "reason": "no year given"}
+
+Rules for this:
+- ONLY when the source genuinely touches the field. If the notes say nothing about pricing at all, return a plain null — do not manufacture an explanation for silence.
+- The quote must be real, copied from the source exactly like any other.
+- The reason is one short phrase naming what is missing. Not a sentence, not an apology, not a suggestion.
+
+If a field is simply absent from the notes, return null with nothing else. Most empty fields are this.
+
 FIELD NOTES
 
 - client_name — the individual contact, not the company.
@@ -59,11 +75,15 @@ Return ONLY a JSON object, no prose around it, shaped:
 
 {
   "client_name": {"value": "Dana Whitfield", "source": "spoke with Dana Whitfield, ops director"},
+  "date_of_call": {"value": null, "source": "Call 14 Oct", "reason": "no year given"},
   "estimated_pricing": null,
   ...
 }
 
-Every one of the eleven fields must appear, as either an object with "value" and "source", or null.`;
+Every one of the eleven fields must appear, as one of:
+  - {"value": "...", "source": "..."}            — found it, here is the proof
+  - {"value": null, "source": "...", "reason": "..."} — nearly, here is what was missing
+  - null                                          — not in the source at all`;
 
 export interface ExtractionInput {
   notes: string;
@@ -74,6 +94,12 @@ export interface ExtractionInput {
 export interface ExtractionResult {
   /** Proposed values that survived verification. */
   fields: Partial<Record<keyof IntakeFields, ExtractedField>>;
+  /**
+   * Fields left null where the source came close, with the quote that nearly
+   * supported them. Shown under the empty input so "not discussed" and
+   * "discussed but incomplete" stop looking identical.
+   */
+  partial: Partial<Record<keyof IntakeFields, PartialSupport>>;
   usage: Usage;
   /**
    * Values the model proposed but whose quote could not be found in the
@@ -113,9 +139,12 @@ export async function extractIntake(
 
   // The quote has to actually appear in the source. See `verify.ts` — this is
   // the difference between provenance and a plausible-looking citation.
-  const { fields, dropped } = verifyProposals(parsed, searchableText(input));
+  const { fields, partial, dropped } = verifyProposals(
+    parsed,
+    searchableText(input),
+  );
 
-  return { fields, usage, dropped };
+  return { fields, partial, usage, dropped };
 }
 
 function buildSources(input: ExtractionInput): string {

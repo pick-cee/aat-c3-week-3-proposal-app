@@ -9,7 +9,11 @@ import { MAX_MATERIALS_SUMMARIZED } from "@/lib/constants";
 import { getServerClient } from "@/lib/db/server";
 import type { Proposal, SupportingMaterial } from "@/lib/db/types";
 import { RuleViolation } from "@/lib/errors";
-import { assertAuthor, assertEditable } from "@/lib/guards";
+import {
+  assertAuthor,
+  assertEditable,
+  editableStatusAfter,
+} from "@/lib/guards";
 import { extractFile } from "@/lib/materials/extract";
 import { classifyFile, unsupportedReason } from "@/lib/materials/formats";
 import { summarizeMaterial } from "@/lib/materials/summarize";
@@ -43,6 +47,12 @@ export async function requestUploadSlot(
   const proposal = row as Proposal;
   assertAuthor(proposal, actor);
   assertEditable(proposal);
+
+  // Adding material after a rejection is acting on the approver's notes.
+  const nextStatus = editableStatusAfter(proposal);
+  if (nextStatus) {
+    await db.from("proposals").update({ status: nextStatus }).eq("id", proposalId);
+  }
 
   // Namespaced by proposal so the storage policies can find the owner, and
   // prefixed with a timestamp so re-uploading the same filename does not

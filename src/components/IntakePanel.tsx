@@ -29,9 +29,12 @@ import { FIELD_TIERS } from "@/lib/policy/fields";
 export function IntakePanel({
   proposal,
   editable,
+  chromeless = false,
 }: {
   proposal: Proposal;
   editable: boolean;
+  /** Drop the card border and heading when nested inside one. */
+  chromeless?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -59,31 +62,47 @@ export function IntakePanel({
   return (
     <section
       className={cn(
-        "card overflow-hidden",
-        blocking.length > 0 && "border-state-failed/30",
+        "overflow-hidden",
+        !chromeless && "card",
+        !chromeless && blocking.length > 0 && "border-state-failed/30",
       )}
     >
-      <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-ink">
-            What the salesperson recorded
-          </h2>
-          <p className="mt-0.5 text-2xs text-ink-subtle">
-            Inserted into the document exactly as typed
-          </p>
-        </div>
+      {!chromeless && (
+        <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-ink">
+              What the salesperson recorded
+            </h2>
+            <p className="mt-0.5 text-2xs text-ink-subtle">
+              Inserted into the document exactly as typed
+            </p>
+          </div>
 
-        {editable && (
-          <Link
-            href={`/proposals/${proposal.id}/confirm`}
-            className={buttonClass("secondary", "sm")}
-          >
-            Edit
-          </Link>
-        )}
-      </header>
+          {editable && (
+            <Link
+              href={`/proposals/${proposal.id}/confirm`}
+              className={buttonClass("secondary", "sm")}
+            >
+              Edit
+            </Link>
+          )}
+        </header>
+      )}
 
       <div className="border-b border-line px-4 py-3">
+        {chromeless && editable && (
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="text-2xs text-ink-subtle">
+              Inserted into the document exactly as typed
+            </p>
+            <Link
+              href={`/proposals/${proposal.id}/confirm`}
+              className={buttonClass("secondary", "sm")}
+            >
+              Edit
+            </Link>
+          </div>
+        )}
         <div className="flex items-center gap-2.5">
           <Meter
             value={filled}
@@ -190,15 +209,28 @@ function IntakeRow({
           filled ? "text-ink" : "italic text-ink-subtle",
         )}
       >
-        {filled ? value : "Not provided"}
+        {/* "Not discussed" and "discussed but incomplete" are different facts,
+            so they do not get the same words. */}
+        {filled
+          ? value
+          : provenance?.reason
+            ? "Incomplete in the notes"
+            : "Not provided"}
       </dd>
 
       {/* Provenance stays visible after confirmation: knowing a value came
           from the notes rather than someone's memory is worth as much when
           revising as it was when confirming. */}
-      {filled && provenance && (
+      {filled && provenance && !provenance.reason && (
         <p className="mt-1 line-clamp-2 text-2xs italic text-ink-subtle">
           &ldquo;{provenance.source}&rdquo;
+        </p>
+      )}
+
+      {!filled && provenance?.reason && (
+        <p className="mt-1 text-2xs text-ink-subtle">
+          <span className="italic">&ldquo;{provenance.source}&rdquo;</span> —{" "}
+          {provenance.reason}
         </p>
       )}
     </div>

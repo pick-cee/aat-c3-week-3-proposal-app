@@ -1,5 +1,6 @@
 import { Icon, cn } from "@/components/ui/primitives";
 import type { ActivityEvent, ActivityLogEntry } from "@/lib/db/types";
+import { formatDateTime, formatNumber } from "@/lib/format";
 
 interface EventStyle {
 	label: string;
@@ -40,8 +41,11 @@ const EVENTS: Record<ActivityEvent, EventStyle> = {
 		icon: "file",
 		tone: "text-ink-subtle",
 	},
+	// Covers both an intake change and a section edited by hand. The detail
+	// says which, so a fixed label like "Intake edited" would be wrong half the
+	// time; "Edited" is true of both and the detail carries the specifics.
 	intake_edited: {
-		label: "Intake edited",
+		label: "Edited",
 		icon: "file",
 		tone: "text-ink-subtle",
 	},
@@ -113,17 +117,12 @@ export function ActivityTimeline({ entries }: { entries: ActivityLogEntry[] }) {
 
 							<p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-2xs text-ink-subtle">
 								<span className="tabular">
-									{new Date(entry.created_at).toLocaleString(undefined, {
-										month: "short",
-										day: "numeric",
-										hour: "numeric",
-										minute: "2-digit",
-									})}
+									{formatDateTime(entry.created_at)}
 								</span>
 								{entry.actor_name && <span>{entry.actor_name}</span>}
 								{tokens > 0 && (
 									<span className="tabular">
-										{tokens.toLocaleString()} tokens
+										{formatNumber(tokens)} tokens
 									</span>
 								)}
 								{entry.model_used && (

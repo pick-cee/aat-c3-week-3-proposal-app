@@ -287,3 +287,136 @@ begin
   end;
 end
 $$;
+
+-- 12. Per-section approval comments -------------------------------------------
+do $$
+declare
+  aid uuid;
+begin
+  insert into approvals (proposal_id, approver_id, approver_name, decision, note)
+  values ('aaaaaaaa-0000-0000-0000-000000000001',
+          '22222222-2222-2222-2222-222222222222', 'Avery Lindqvist',
+          'changes_requested', 'Overall note.')
+  returning id into aid;
+
+  insert into approval_comments (approval_id, section_key, note)
+  values (aid, 'deliverables', 'Promises support we did not scope.');
+
+  -- One comment per section per decision: a revised note replaces, it does not
+  -- stack a second one the salesperson has to reconcile.
+  begin
+    insert into approval_comments (approval_id, section_key, note)
+    values (aid, 'deliverables', 'A second note on the same section.');
+    raise exception 'FAIL: duplicate section comment accepted';
+  exception when unique_violation then
+    raise notice 'PASS: one comment per section per decision';
+  end;
+
+  -- An empty note is not feedback.
+  begin
+    insert into approval_comments (approval_id, section_key, note)
+    values (aid, 'pricing', '   ');
+    raise exception 'FAIL: blank note accepted';
+  exception when check_violation then
+    raise notice 'PASS: blank section notes rejected';
+  end;
+
+  -- Only real sections.
+  begin
+    insert into approval_comments (approval_id, section_key, note)
+    values (aid, 'not_a_section', 'x');
+    raise exception 'FAIL: unknown section_key accepted';
+  exception when check_violation then
+    raise notice 'PASS: unknown section keys rejected';
+  end;
+end
+$$;
+
+do $$
+declare
+  n int;
+begin
+  -- Comments follow their decision, which is permanent.
+  select count(*) into n from pg_policies
+   where tablename = 'approval_comments' and cmd in ('UPDATE','DELETE');
+  if n > 0 then
+    raise exception 'FAIL: approval_comments has % update/delete policies', n;
+  end if;
+  raise notice 'PASS: approval comments are permanent, like the decision';
+
+  if not (select relrowsecurity from pg_class
+           where oid = 'approval_comments'::regclass) then
+    raise exception 'FAIL: RLS not enabled on approval_comments';
+  end if;
+  raise notice 'PASS: RLS enabled on approval_comments';
+end
+$$;
+
+-- 13. Delivery attempts are numbered by the database ---------------------------
+do $$
+declare
+  a1 int; a2 int; a3 int;
+  fresh uuid;
+begin
+  -- A proposal with NO delivery history, so the numbering starts where a real
+  -- first send would. (An earlier block in this file already sent from the
+  -- other two.)
+  insert into proposals (version, status, author_id, author_name, share_token)
+  values (1, 'approved', '11111111-1111-1111-1111-111111111111', 'Sam Okafor',
+          'tok_attempts')
+  returning id into fresh;
+
+  insert into deliveries (proposal_id, intended_recipient, actual_recipient, status)
+  values (fresh,'d@x.com','demo@x.com','failed')
+  returning attempt into a1;
+
+  insert into deliveries (proposal_id, intended_recipient, actual_recipient, status)
+  values (fresh,'d@x.com','demo@x.com','failed')
+  returning attempt into a2;
+
+  insert into deliveries (proposal_id, intended_recipient, actual_recipient, status)
+  values (fresh,'d@x.com','demo@x.com','failed')
+  returning attempt into a3;
+
+  -- The application used to compute this as count(*)+1 before the send, so two
+  -- clicks produced "Attempt 1" twice and the record of what was tried was wrong.
+  if a1 <> 1 or a2 <> 2 or a3 <> 3 then
+    raise exception 'FAIL: attempts numbered %, %, % — expected 1, 2, 3', a1, a2, a3;
+  end if;
+  raise notice 'PASS: successive attempts numbered 1, 2, 3 by the database';
+end
+$$;
+
+do $$
+declare
+  n int;
+begin
+  -- Numbering is per proposal, not global.
+  select attempt into n
+    from deliveries
+   where proposal_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+   order by created_at limit 1;
+
+  if n <> 1 then
+    raise exception 'FAIL: first attempt on another proposal numbered %', n;
+  end if;
+  raise notice 'PASS: attempt numbering is per proposal';
+end
+$$;
+
+-- 14. Deliveries are not writable by users ------------------------------------
+do $$
+declare
+  n int;
+begin
+  -- The rows record what the SYSTEM did. A user who could write them could
+  -- claim a proposal was sent when it never was, so the app uses the service
+  -- role and there is deliberately no insert policy.
+  select count(*) into n from pg_policies
+   where tablename = 'deliveries' and cmd in ('INSERT','UPDATE','DELETE');
+  if n > 0 then
+    raise exception 'FAIL: deliveries has % user-write policies', n;
+  end if;
+  raise notice 'PASS: deliveries writable only via the service role';
+end
+$$;

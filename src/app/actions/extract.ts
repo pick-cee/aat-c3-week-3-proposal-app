@@ -148,12 +148,27 @@ export async function extractFromNotes(
     });
 
     const values: Partial<IntakeFields> = {};
-    const provenance: Record<string, { source: string; confirmed: boolean }> = {};
+    const provenance: Record<
+      string,
+      { source: string; confirmed: boolean; reason?: string }
+    > = {};
 
     for (const [field, extracted] of Object.entries(result.fields)) {
       values[field as keyof IntakeFields] = extracted.value;
       // `confirmed: false` — the salesperson has not seen these yet.
       provenance[field] = { source: extracted.source, confirmed: false };
+    }
+
+    // Fields left empty where the source came close. Stored in the same map
+    // because the confirm screen asks one question per field — "what do I know
+    // about this?" — and two maps would mean two lookups that can disagree.
+    // The `reason` is what marks these as explanations rather than evidence.
+    for (const [field, nearMiss] of Object.entries(result.partial)) {
+      provenance[field] = {
+        source: nearMiss.source,
+        reason: nearMiss.reason,
+        confirmed: false,
+      };
     }
 
     await db

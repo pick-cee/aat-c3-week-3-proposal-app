@@ -1,18 +1,25 @@
 import { RuleViolation } from "@/lib/errors";
 import type { Profile, Proposal } from "@/lib/db/types";
 
-/** Rule 1: content is editable only in `draft`. */
+/**
+ * Rule 1: content is editable only in `draft` — and `changes_requested`,
+ * which is on its way there.
+ *
+ * DESIGN.md section 2 rule 6: a rejected proposal "returns to `draft` on the
+ * salesperson's first edit". So an edit in `changes_requested` is not merely
+ * permitted, it is the transition itself. This guard previously threw and told
+ * callers to transition first, which meant every edit path had to remember to
+ * do it — and three of the four did not. A salesperson who acted on the
+ * approver's notes got a 500.
+ *
+ * The transition is now the caller's to PERFORM (they hold the database
+ * handle) but no longer theirs to REMEMBER: `editableStatusAfter` says what the
+ * status should become, and forgetting to apply it costs a stale status rather
+ * than a crash.
+ */
 export function assertEditable(proposal: Proposal): void {
   if (proposal.status === "draft") return;
-
-  if (proposal.status === "changes_requested") {
-    // Not an error state: the first edit moves it back to draft. Callers that
-    // intend to edit should transition first, so reaching here is a bug.
-    throw new RuleViolation(
-      "This proposal has changes requested. Editing it returns it to draft first.",
-      "needs_transition_to_draft",
-    );
-  }
+  if (proposal.status === "changes_requested") return;
 
   if (proposal.status === "in_review") {
     throw new RuleViolation(
@@ -28,6 +35,21 @@ export function assertEditable(proposal: Proposal): void {
     "Editing it creates a new version, leaving the approved one exactly as it was.",
     "frozen_fork_instead",
   );
+}
+
+/**
+ * The status a proposal should carry once it has been edited, or null when it
+ * already carries the right one.
+ *
+ * Editing a rejected proposal returns it to `draft` — the approver's note has
+ * been acted on, and the queue needs to stop showing it as waiting on the
+ * salesperson to respond. Returning null rather than always returning "draft"
+ * keeps callers from issuing a pointless write on every keystroke-level save.
+ */
+export function editableStatusAfter(
+  proposal: Proposal,
+): "draft" | null {
+  return proposal.status === "changes_requested" ? "draft" : null;
 }
 
 /** Only the author acts on their own proposal. */

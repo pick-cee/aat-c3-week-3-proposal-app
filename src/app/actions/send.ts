@@ -5,6 +5,7 @@ import { Resend } from "resend";
 
 import { logActivity } from "@/lib/activity";
 import { requireProfile } from "@/lib/auth";
+import { getAdminClient } from "@/lib/db/admin";
 import { getServerClient } from "@/lib/db/server";
 import type { Delivery, Proposal } from "@/lib/db/types";
 import { classifySendFailure, rawErrorText } from "@/lib/email/classify";
@@ -54,7 +55,6 @@ export async function sendProposal(proposalId: string): Promise<SendResult> {
   }
 
   const { intended, actual, demoMode } = resolveRecipient(recipient);
-  const attempt = await nextAttemptNumber(proposalId);
 
   const proposalUrl = `${env.NEXT_PUBLIC_SITE_URL}/p/${proposal.share_token}`;
   const email = composeClientEmail(proposal, proposalUrl);
@@ -79,7 +79,6 @@ export async function sendProposal(proposalId: string): Promise<SendResult> {
       intended,
       actual,
       demoMode,
-      attempt,
       providerMessageId: sent?.id ?? null,
       actorName: actor.full_name,
     });
@@ -89,7 +88,6 @@ export async function sendProposal(proposalId: string): Promise<SendResult> {
       intended,
       actual,
       demoMode,
-      attempt,
       error,
       actorName: actor.full_name,
     });
@@ -101,20 +99,28 @@ async function recordSuccess(args: {
   intended: string;
   actual: string;
   demoMode: boolean;
-  attempt: number;
   providerMessageId: string | null;
   actorName: string;
 }): Promise<SendResult> {
   const db = await getServerClient();
 
-  const { error } = await db.from("deliveries").insert({
+  // Delivery rows are written with the SERVICE ROLE, deliberately.
+  //
+  // `deliveries` has a read policy and no insert policy — RLS denies by
+  // default, so the row silently failed to write and the send reported "an
+  // unexpected error" for what was actually a permissions rule. The policy is
+  // right and the client was wrong: a delivery record is a statement about
+  // what the system did, not about what a user typed, and a user who could
+  // write these could claim a proposal was sent when it never was.
+  const admin = getAdminClient();
+
+  const { error } = await admin.from("deliveries").insert({
     proposal_id: args.proposalId,
     intended_recipient: args.intended,
     actual_recipient: args.actual,
     demo_mode: args.demoMode,
     status: "sent",
     provider_message_id: args.providerMessageId,
-    attempt: args.attempt,
   });
 
   if (error) {
@@ -170,16 +176,17 @@ async function recordFailure(args: {
   intended: string;
   actual: string;
   demoMode: boolean;
-  attempt: number;
   error: unknown;
   actorName: string;
 }): Promise<SendResult> {
-  const db = await getServerClient();
+  const admin = getAdminClient();
   const classified = classifySendFailure(args.error);
 
   // Every attempt, successful or not, is a row. Three failed attempts followed
   // by a success is a story someone can read later.
-  await db.from("deliveries").insert({
+  const { data: recorded } = await admin
+    .from("deliveries")
+    .insert({
     proposal_id: args.proposalId,
     intended_recipient: args.intended,
     actual_recipient: args.actual,
@@ -188,14 +195,17 @@ async function recordFailure(args: {
     error: rawErrorText(args.error),
     failure_reason: classified.reason,
     retryable: classified.retryable,
-    attempt: args.attempt,
-  });
+    })
+    // Read the attempt number back: the trigger assigns it, so this is the
+    // only place that knows what it actually is.
+    .select("attempt")
+    .single();
 
   await logActivity({
     proposalId: args.proposalId,
     actorName: args.actorName,
     event: "send_failed",
-    detail: `Attempt ${args.attempt}: ${classified.reason}`,
+    detail: `Attempt ${recorded?.attempt ?? "?"}: ${classified.reason}`,
   });
 
   // The proposal stays `approved`. It never silently reverts to draft, because
@@ -211,16 +221,6 @@ async function recordFailure(args: {
   };
 }
 
-async function nextAttemptNumber(proposalId: string): Promise<number> {
-  const db = await getServerClient();
-
-  const { count } = await db
-    .from("deliveries")
-    .select("id", { count: "exact", head: true })
-    .eq("proposal_id", proposalId);
-
-  return (count ?? 0) + 1;
-}
 
 function isUniqueViolation(error: { code?: string; message?: string }): boolean {
   return (

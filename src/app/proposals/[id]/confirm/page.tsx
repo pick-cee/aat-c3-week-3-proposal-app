@@ -33,8 +33,15 @@ export default async function ConfirmPage({
 	if (proposal.author_id !== actor.id) notFound();
 
 	const provenance = proposal.field_provenance ?? {};
-	const extractedCount = Object.keys(provenance).length;
-	const wasExtracted = extractedCount > 0 && manual !== "1";
+
+	// An entry with a `reason` explains an EMPTY field, so it is not something
+	// that was found — counting it as one would tell the salesperson Claude
+	// filled in more than it did.
+	const entries = Object.values(provenance);
+	const extractedCount = entries.filter((p) => !p.reason).length;
+	const partialCount = entries.filter((p) => p.reason).length;
+
+	const wasExtracted = entries.length > 0 && manual !== "1";
 
 	// The editor links here to change intake, rather than carrying a second copy
 	// of the form. Once anything has been confirmed, this screen is an edit — and
@@ -91,12 +98,23 @@ export default async function ConfirmPage({
 							value={extractedCount}
 							label={`field${extractedCount === 1 ? "" : "s"} found in your notes`}
 						/>
-						{missing > 0 && (
+						{/* Counted separately from the rest: these were discussed and
+						    left incomplete, which is a different job from chasing
+						    something that never came up. */}
+						{partialCount > 0 && (
 							<Stat
 								icon="alert"
 								tone="neutral"
-								value={missing}
-								label={`still empty — your notes did not cover ${missing === 1 ? "it" : "them"}`}
+								value={partialCount}
+								label={`mentioned but incomplete — see the note under ${partialCount === 1 ? "it" : "each"}`}
+							/>
+						)}
+						{missing - partialCount > 0 && (
+							<Stat
+								icon="alert"
+								tone="neutral"
+								value={missing - partialCount}
+								label={`not discussed on the call`}
 							/>
 						)}
 					</div>

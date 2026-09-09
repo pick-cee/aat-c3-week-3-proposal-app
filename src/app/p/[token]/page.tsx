@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { createClient } from "@supabase/supabase-js";
 
+import { ProposalProse } from "@/components/ProposalProse";
 import { env } from "@/lib/env";
 import type { SharedProposal } from "@/lib/db/types";
 
@@ -92,9 +93,11 @@ export default async function ClientProposalPage({
 								<h2 className="font-serif text-xl font-semibold text-ink">
 									{section.title}
 								</h2>
-								<div className="prose-proposal mt-3 whitespace-pre-wrap font-serif text-[1.0625rem] text-ink">
-									{section.content}
-								</div>
+								<ProposalProse
+								content={section.content!}
+								tone="document"
+								className="mt-3 font-serif text-[1.0625rem]"
+							/>
 							</section>
 						))}
 				</article>

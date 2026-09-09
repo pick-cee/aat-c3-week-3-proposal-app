@@ -2,6 +2,7 @@ import "server-only";
 
 import { GENERATIONS_PER_HOUR_GLOBAL } from "@/lib/constants";
 import { getAdminClient } from "@/lib/db/admin";
+import { formatTime } from "@/lib/format";
 
 const BILLABLE_EVENTS = [
   "intake_extracted", // Sonnet, once per proposal, on the public notes screen
@@ -92,10 +93,7 @@ export class RateLimitUnavailableError extends Error {
 
 /** The user-facing message. Says what happened, when it lifts, and what is safe. */
 export function rateLimitMessage(result: RateLimitResult & { allowed: false }) {
-  const time = result.resetsAt.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  const time = formatTime(result.resetsAt);
 
   return (
     `This application has hit its hourly generation limit ` +

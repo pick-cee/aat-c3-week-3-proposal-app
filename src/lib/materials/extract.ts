@@ -5,6 +5,7 @@ import {
   MIN_USEFUL_CHARS,
 } from "@/lib/constants";
 import type { ExtractionStatus } from "@/lib/db/types";
+import { formatNumber } from "@/lib/format";
 import { classifyFile, unsupportedReason, type Handling } from "./formats";
 
 export interface ExtractionResult {
@@ -230,8 +231,8 @@ function finish(raw: string, filename: string): ExtractionResult {
     return {
       status: "ok",
       note:
-        `Only the first ${MAX_EXTRACTED_CHARS_PER_FILE.toLocaleString()} ` +
-        `characters of ${filename} were used (of ${text.length.toLocaleString()}). ` +
+        `Only the first ${formatNumber(MAX_EXTRACTED_CHARS_PER_FILE)} ` +
+        `characters of ${filename} were used (of ${formatNumber(text.length)}). ` +
         `The rest was stored but not sent to the model.`,
       text: text.slice(0, MAX_EXTRACTED_CHARS_PER_FILE),
       truncated: true,

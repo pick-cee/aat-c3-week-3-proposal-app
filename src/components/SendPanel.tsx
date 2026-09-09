@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { sendProposal } from "@/app/actions/send";
 import { Icon, Note, buttonClass, cn } from "@/components/ui/primitives";
 import type { Delivery } from "@/lib/db/types";
+import { formatDateTime } from "@/lib/format";
 
 /**
  * Sending, and everything that has happened to previous attempts.
@@ -60,12 +61,7 @@ export function SendPanel({
                 {succeeded.actual_recipient}
               </span>{" "}
               on{" "}
-              {new Date(succeeded.created_at).toLocaleString(undefined, {
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-              })}
+              {formatDateTime(succeeded.created_at)}
               .
               {succeeded.demo_mode &&
                 succeeded.intended_recipient !== succeeded.actual_recipient && (
@@ -215,12 +211,7 @@ function History({ deliveries }: { deliveries: Delivery[] }) {
                   {delivery.status === "sent" ? "delivered" : "failed"}
                 </span>
                 <span className="text-ink-subtle tabular">
-                  {new Date(delivery.created_at).toLocaleString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
+                  {formatDateTime(delivery.created_at)}
                 </span>
               </p>
 

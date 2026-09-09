@@ -6,7 +6,12 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity";
 import { requireProfile } from "@/lib/auth";
 import { getServerClient } from "@/lib/db/server";
-import type { Proposal, ProposalSection, SupportingMaterial } from "@/lib/db/types";
+import type {
+  Proposal,
+  ProposalSection,
+  SectionKey,
+  SupportingMaterial,
+} from "@/lib/db/types";
 import { RuleViolation } from "@/lib/errors";
 import {
   assertAuthor,
@@ -134,19 +139,38 @@ export async function approveProposal(
   revalidatePath(`/proposals/${proposalId}`);
   redirect("/queue");
 }
+/**
+ * Sends a proposal back with notes.
+ *
+ * Comments are per SECTION, plus an optional overall note for anything that is
+ * not about one section. The approver knows which section they object to at the
+ * moment they object to it, and a single free-text note forced them to describe
+ * the location in prose — then forced the salesperson to find it again by
+ * reading.
+ *
+ * `changes_requested` is a resting state, not a transition: the proposal sits
+ * there displaying these notes, and returns to `draft` on the salesperson's
+ * first edit.
+ */
 export async function requestChanges(
   proposalId: string,
   note: string,
+  sectionNotes: Array<{ sectionKey: SectionKey; note: string }> = [],
 ): Promise<void> {
   const actor = await requireProfile();
 
-  const trimmed = note.trim();
-  if (trimmed === "") {
-    // The note is the entire value of this action. "Rejected" with no reason
-    // sends the salesperson back to guess.
+  const trimmedOverall = note.trim();
+  const comments = sectionNotes
+    .map((c) => ({ sectionKey: c.sectionKey, note: c.note.trim() }))
+    .filter((c) => c.note !== "");
+
+  // At least one of the two. "Rejected" with no reason sends the salesperson
+  // back to guess, which is the failure this whole screen exists to prevent.
+  if (trimmedOverall === "" && comments.length === 0) {
     throw new RuleViolation(
-      "Say what needs to change. A rejection without a reason is not something " +
-      "the salesperson can act on.",
+      "Say what needs to change. Add a note on the sections that need work, " +
+        "or an overall note — a rejection without a reason is not something " +
+        "the salesperson can act on.",
       "note_required",
     );
   }
@@ -164,16 +188,42 @@ export async function requestChanges(
   const proposal = data as Proposal;
   assertCanApprove(proposal, actor);
 
-  const { error } = await db.from("approvals").insert({
-    proposal_id: proposalId,
-    approver_id: actor.id,
-    approver_name: actor.full_name,
-    decision: "changes_requested",
-    note: trimmed,
-  });
+  // The decision row first, so the comments have something to hang off. If the
+  // comment insert then fails, the decision still stands and is visible —
+  // better than a proposal sent back with the reason lost.
+  const { data: approvalRow, error } = await db
+    .from("approvals")
+    .insert({
+      proposal_id: proposalId,
+      approver_id: actor.id,
+      approver_name: actor.full_name,
+      decision: "changes_requested",
+      note: trimmedOverall || null,
+    })
+    .select()
+    .single();
 
-  if (error) {
-    throw new Error(`Could not record the decision: ${error.message}`);
+  if (error || !approvalRow) {
+    throw new Error(`Could not record the decision: ${error?.message}`);
+  }
+
+  if (comments.length > 0) {
+    const { error: commentError } = await db.from("approval_comments").insert(
+      comments.map((c) => ({
+        approval_id: approvalRow.id,
+        section_key: c.sectionKey,
+        note: c.note,
+      })),
+    );
+
+    if (commentError) {
+      // The decision is already recorded, so this is reported rather than
+      // thrown: losing the section notes is bad, losing the decision as well
+      // would be worse.
+      console.error(
+        `[review] section notes not saved for ${proposalId}: ${commentError.message}`,
+      );
+    }
   }
 
   await db
@@ -185,7 +235,11 @@ export async function requestChanges(
     proposalId,
     actorName: actor.full_name,
     event: "changes_requested",
-    detail: trimmed,
+    detail:
+      comments.length > 0
+        ? `${comments.length} section${comments.length === 1 ? "" : "s"} need work` +
+          (trimmedOverall ? `. ${trimmedOverall}` : ".")
+        : trimmedOverall,
   });
 
   revalidatePath(`/proposals/${proposalId}`);

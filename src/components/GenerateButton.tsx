@@ -1,11 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 
 import {
 	generateOneSection,
 	recordGenerationGaps,
+	type SectionWarning,
 } from "@/app/actions/generate";
 import { Icon, Note, buttonClass, cn } from "@/components/ui/primitives";
 import {
@@ -20,18 +21,45 @@ export type SectionProgress = Record<
 	"pending" | "writing" | "done" | "failed"
 >;
 
+/**
+ * Text that has arrived during this run, keyed by section.
+ *
+ * Held on the client so a finished section appears the instant its call
+ * returns. The alternative — one `router.refresh()` after the whole loop —
+ * left three completed sections showing "Not written yet" while the fourth was
+ * still being written, which reads as the application having stalled.
+ */
+export type SectionResults = Record<
+	string,
+	{ content?: string; warnings?: SectionWarning[] }
+>;
+
 export function GenerateButton({
 	proposalId,
 	blocking,
 	warnings,
 	hasContent,
 	onProgress,
+	onResult,
+	autoStart = false,
 }: {
 	proposalId: string;
 	blocking: FieldGap[];
 	warnings: FieldGap[];
 	hasContent: boolean;
 	onProgress?: (progress: SectionProgress) => void;
+	/** Called the moment a section's text arrives, so its card can show it. */
+	onResult?: (results: SectionResults) => void;
+	/**
+	 * Begin writing on arrival, without waiting for a click.
+	 *
+	 * Set when a salesperson lands here having just confirmed the intake and
+	 * nothing has been written yet. They have already said "these values are
+	 * right" — asking them to press a second button to make the thing they came
+	 * for happen is a step that exists only because the code was built in that
+	 * order.
+	 */
+	autoStart?: boolean;
 }) {
 	const router = useRouter();
 	const [, startTransition] = useTransition();
@@ -40,6 +68,7 @@ export function GenerateButton({
 	const [current, setCurrent] = useState<SectionKey | null>(null);
 	const [failures, setFailures] = useState<string[]>([]);
 	const [completed, setCompleted] = useState(0);
+	const started = useRef(false);
 
 	const isBlocked = blocking.length > 0;
 	const total = GENERATED_SECTIONS.length;
@@ -61,6 +90,7 @@ export function GenerateButton({
 		}
 
 		const problems: string[] = [];
+		const results: SectionResults = {};
 
 		for (const [index, section] of GENERATED_SECTIONS.entries()) {
 			setCurrent(section.key);
@@ -72,6 +102,17 @@ export function GenerateButton({
 				section.key,
 				confirmedWarnings,
 			);
+
+			// Publish the text BEFORE anything else, so the card swaps from
+			// skeleton to prose the moment the call returns rather than when the
+			// whole run ends.
+			if (result.ok && result.content) {
+				results[section.key] = {
+					content: result.content,
+					warnings: result.warnings,
+				};
+				onResult?.({ ...results });
+			}
 
 			progress[section.key] = result.ok ? "done" : "failed";
 			onProgress?.({ ...progress });
@@ -99,6 +140,26 @@ export function GenerateButton({
 		// Pull the saved content down from the server now the run is finished.
 		startTransition(() => router.refresh());
 	}
+
+	/**
+	 * Start writing on arrival when there is nothing yet.
+	 *
+	 * The ref, not state, is the guard: React invokes effects twice in
+	 * development, and a second run here would spend four more Sonnet calls
+	 * against the hourly limit for output nobody asked for.
+	 *
+	 * Warn-tier gaps still stop for confirmation — a proposal that will carry
+	 * "[To be confirmed]" in front of a client is not something to start
+	 * silently.
+	 */
+	useEffect(() => {
+		if (!autoStart || started.current) return;
+		if (isBlocked || hasContent || warnings.length > 0) return;
+
+		started.current = true;
+		void run(false);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [autoStart, isBlocked, hasContent, warnings.length]);
 
 	// The blocked state is rendered by ProposalWorkspace, attached to the
 	// control it blocks and carrying a link to the fix. Repeating it here would
@@ -159,14 +220,17 @@ export function GenerateButton({
 					{running
 						? `Writing ${completed + (current ? 1 : 0)} of ${total}…`
 						: hasContent
-							? "Regenerate all sections"
-							: "Generate proposal"}
+							? "Rewrite all sections"
+							: "Write the proposal"}
 				</button>
 
-				{running && (
+				{running && current && (
 					<p className="text-sm text-ink-muted animate-fade">
-						One call per section, in order — each one reads the sections before
-						it.
+						Writing{" "}
+						<span className="font-medium text-ink">
+							{GENERATED_SECTIONS.find((s) => s.key === current)?.title}
+						</span>
+						…
 					</p>
 				)}
 			</div>

@@ -94,7 +94,12 @@ export async function generateSection(
       continue;
     }
 
-    const verification = verifyCommercialTerms(content, input.intake);
+    // The section key decides which name checks apply — see `checkNames`.
+    const verification = verifyCommercialTerms(
+      content,
+      input.intake,
+      input.sectionKey,
+    );
 
     if (verification.ok) {
       attempts.push({ usage, outcome: "accepted" });

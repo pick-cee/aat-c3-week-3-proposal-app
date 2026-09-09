@@ -14,7 +14,12 @@ import type {
   SupportingMaterial,
 } from "@/lib/db/types";
 import { RuleViolation } from "@/lib/errors";
-import { assertAuthor, assertEditable, assertNotApproverEditing } from "@/lib/guards";
+import {
+  assertAuthor,
+  assertEditable,
+  assertNotApproverEditing,
+  editableStatusAfter,
+} from "@/lib/guards";
 import { generateSection, type GenerationAttempt } from "@/lib/generate/section";
 import { assessReadiness, findGaps } from "@/lib/policy/fields";
 import {
@@ -101,7 +106,7 @@ export async function generateOneSection(
   proposalId: string,
   sectionKey: SectionKey,
   confirmedWarnings = false,
-): Promise<{ ok: boolean; message?: string; stopRun?: boolean }> {
+): Promise<SectionOutcome> {
   const { actor, proposal } = await loadForGeneration(proposalId);
 
   const readiness = assessReadiness(proposal, confirmedWarnings);
@@ -136,7 +141,7 @@ export async function recordGenerationGaps(proposalId: string): Promise<void> {
 export async function regenerateSection(
   proposalId: string,
   sectionKey: SectionKey,
-): Promise<{ ok: boolean; message?: string }> {
+): Promise<SectionOutcome> {
   const { actor, proposal } = await loadForGeneration(proposalId);
 
   // The Block tier gates EVERY path to a model call, not just the full run.
@@ -159,7 +164,7 @@ export async function regenerateSection(
   }
 
   revalidatePath(`/proposals/${proposalId}`);
-  return { ok: outcome.ok, message: outcome.message };
+  return outcome;
 }
 
 async function loadForGeneration(
@@ -181,6 +186,15 @@ async function loadForGeneration(
   assertAuthor(proposal, actor);
   assertEditable(proposal);
 
+  // Generating after a rejection is acting on the approver's notes, so it
+  // returns the proposal to draft (rule 6). Done here rather than in each
+  // caller because every generation path comes through this function.
+  const nextStatus = editableStatusAfter(proposal);
+  if (nextStatus) {
+    await db.from("proposals").update({ status: nextStatus }).eq("id", proposalId);
+    proposal.status = nextStatus;
+  }
+
   return { actor, proposal };
 }
 
@@ -189,6 +203,28 @@ interface SectionOutcome {
   message?: string;
   /** True when the rest of a multi-section run should be abandoned. */
   stopRun?: boolean;
+  /**
+   * The text that was just written.
+   *
+   * Returned so the card can show it the moment the call returns. Before this,
+   * the content was saved server-side and the client waited for one
+   * `router.refresh()` after ALL four sections finished — so a salesperson
+   * watched three completed sections sit empty while the fourth was written.
+   */
+  content?: string;
+  /** Name warnings on this section, for the marker on its card. */
+  warnings?: SectionWarning[];
+}
+
+/**
+ * A name the model paraphrased or omitted. Never blocking — see the
+ * commercial-terms check — but worth a human glance, and now clickable
+ * straight to the text it concerns.
+ */
+export interface SectionWarning {
+  field: string;
+  expected: string;
+  note: string;
 }
 
 async function runSectionGeneration(
@@ -320,10 +356,17 @@ async function runSectionGeneration(
 
   return {
     ok: true,
-    message:
-      outcome.warnings.length > 0
-        ? outcome.warnings.map((w) => w.note).join(" ")
-        : undefined,
+    // Handed back so the card renders it immediately rather than waiting for
+    // the whole run to finish and a page refresh to fetch it.
+    content: outcome.content,
+    warnings: outcome.warnings.map((w) => ({
+      field: w.field,
+      expected: w.expected,
+      note: w.note,
+    })),
+    // No `message` here. The warnings are rendered as their own clickable
+    // band on the card; repeating them as a plain note showed the identical
+    // sentence twice, one of them not actionable.
   };
 }
 

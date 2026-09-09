@@ -3,6 +3,11 @@ import { INTAKE_FIELD_KEYS, type IntakeFields } from "@/lib/db/types";
 export interface RawProposal {
   value?: unknown;
   source?: unknown;
+  /**
+   * Why a field was left null when the source ALMOST supported it.
+   * Only meaningful alongside `source` and a null `value`.
+   */
+  reason?: unknown;
 }
 
 export interface ExtractedField {
@@ -11,8 +16,33 @@ export interface ExtractedField {
   source: string;
 }
 
+/**
+ * A field extraction declined to fill, where the source nearly supported it.
+ *
+ * "Call 14 Oct" with no year does not give a date — filling one in would be
+ * fabrication. But an empty field renders identically whether the notes never
+ * mentioned it or mentioned it incompletely, and those call for different
+ * actions: one needs asking the client, the other needs remembering which year
+ * you were in.
+ *
+ * Same distinction as `unsupported` versus `empty` on an uploaded file, one
+ * layer up.
+ */
+export interface PartialSupport {
+  /** The span of the source that came close, verified to appear there. */
+  source: string;
+  /** What was missing, in words. */
+  reason: string;
+}
+
 export interface VerificationOutcome {
   fields: Partial<Record<keyof IntakeFields, ExtractedField>>;
+  /**
+   * Only for fields the source touched but did not settle. A field genuinely
+   * absent from the notes stays out of this map — a reason under every empty
+   * input would be noise, and noise is how a real explanation gets skipped.
+   */
+  partial: Partial<Record<keyof IntakeFields, PartialSupport>>;
   dropped: Array<{ field: keyof IntakeFields; reason: string }>;
 }
 
@@ -42,7 +72,18 @@ export function verifyProposals(
 ): VerificationOutcome {
   const haystack = normalize(sourceText);
   const fields: VerificationOutcome["fields"] = {};
+  const partial: VerificationOutcome["partial"] = {};
   const dropped: VerificationOutcome["dropped"] = [];
+
+  /**
+   * A quote has to appear in the source whether it is justifying a value or
+   * explaining the absence of one. Without this, "the notes mention X but not
+   * Y" is just as inventable as X itself — and an explanation nobody can check
+   * is worse than no explanation, because it reads as evidence.
+   */
+  const quoteIsReal = (quote: string) =>
+    normalize(quote).length >= MIN_QUOTE_LENGTH &&
+    haystack.includes(normalize(quote));
 
   for (const field of INTAKE_FIELD_KEYS) {
     const proposal = proposals[field];
@@ -53,8 +94,20 @@ export function verifyProposals(
 
     const value = asString(proposal.value);
     const source = asString(proposal.source);
+    const reason = asString(proposal.reason);
 
-    if (!value) continue; // proposed nothing; same as null
+    if (!value) {
+      // No value, but the model says the source came close. Keep the
+      // explanation only if both halves survive checking — a verified quote
+      // and something to say about it.
+      if (source && reason && quoteIsReal(source)) {
+        partial[field] = { source, reason };
+      }
+
+      // Otherwise silent: genuinely absent from the notes, or an explanation
+      // that could not be substantiated. Both mean nothing to show.
+      continue;
+    }
 
     if (!source) {
       dropped.push({
@@ -85,7 +138,7 @@ export function verifyProposals(
     fields[field] = { value, source };
   }
 
-  return { fields, dropped };
+  return { fields, partial, dropped };
 }
 
 function asString(value: unknown): string | null {
@@ -104,29 +157,13 @@ function truncate(text: string, max = 60): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
 }
 
-/**
- * Which provenance entries survive an edit.
+/*
+ * `survivingProvenance` used to live here. It was superseded by
+ * `provenanceAfterEdit` in `app/actions/proposals.ts`, which works from the
+ * STORED provenance rather than a fresh extraction result — the only version
+ * that can run on an intake edit weeks after the notes were read.
  *
- * A source phrase that no longer supports the value in the field is worse than
- * no source at all: the form would show a quotation appearing to justify a
- * number nobody extracted. So an edited field becomes hand-typed, and this is
- * decided by comparing values rather than trusting the client to report it.
+ * Removed rather than left in place: two implementations of "does this source
+ * still support this value" would eventually disagree, and the dead one is the
+ * one nobody remembers to update.
  */
-export function survivingProvenance(
-  extracted: Partial<Record<keyof IntakeFields, ExtractedField>>,
-  submitted: Partial<IntakeFields>,
-): Record<string, { source: string; confirmed: boolean }> {
-  const kept: Record<string, { source: string; confirmed: boolean }> = {};
-
-  for (const field of INTAKE_FIELD_KEYS) {
-    const proposal = extracted[field];
-    if (!proposal) continue;
-
-    const current = (submitted[field] ?? "").trim();
-    if (current === "" || current !== proposal.value.trim()) continue;
-
-    kept[field] = { source: proposal.source, confirmed: true };
-  }
-
-  return kept;
-}

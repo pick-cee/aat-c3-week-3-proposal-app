@@ -3,10 +3,7 @@ import { notFound } from "next/navigation";
 
 import { loadDeliveries } from "@/app/actions/send";
 import { AppShell } from "@/components/AppShell";
-import { ActivityTimeline } from "@/components/ActivityTimeline";
-import { IntakePanel } from "@/components/IntakePanel";
-import { MaterialList } from "@/components/MaterialList";
-import { MaterialUploader } from "@/components/MaterialUploader";
+import { ProposalSidebar } from "@/components/ProposalSidebar";
 import { ProposalWorkspace } from "@/components/ProposalWorkspace";
 import { SendPanel } from "@/components/SendPanel";
 import { StatusPill } from "@/components/StatusPill";
@@ -17,6 +14,7 @@ import { costOf } from "@/lib/constants";
 import { getServerClient } from "@/lib/db/server";
 import type {
   ActivityLogEntry,
+  ApprovalComment,
   Proposal,
   ProposalSection,
   SupportingMaterial,
@@ -94,6 +92,9 @@ export default async function ProposalEditorPage({
 
   const recipient = resolveRecipient(proposal.client_email?.trim() ?? "");
 
+  // Per-section notes from the latest rejection, so each lands on the section
+  // it is about rather than as one banner the salesperson has to map onto the
+  // document by reading.
   const { data: latestApproval } =
     proposal.status === "changes_requested"
       ? await db
@@ -105,6 +106,36 @@ export default async function ProposalEditorPage({
           .limit(1)
           .maybeSingle()
       : { data: null };
+
+  // The per-section notes from that decision, keyed for the cards.
+  const { data: commentRows } = latestApproval
+    ? await db
+        .from("approval_comments")
+        .select("*")
+        .eq("approval_id", latestApproval.id)
+    : { data: [] };
+
+  const sectionFeedback = new Map<string, string>(
+    ((commentRows ?? []) as ApprovalComment[]).map((c) => [
+      c.section_key,
+      c.note,
+    ]),
+  );
+
+  /**
+   * Start writing on arrival, rather than making the salesperson press a
+   * button to get the thing they came here for.
+   *
+   * Only when everything is genuinely ready: they own it, it is editable,
+   * intake clears the Block tier, and nothing has been written. Warn-tier gaps
+   * deliberately do NOT auto-start — a proposal that will carry
+   * "[To be confirmed]" in front of a client deserves a deliberate click.
+   */
+  const autoStart =
+    editable &&
+    readiness.canGenerate &&
+    readiness.warnings.length === 0 &&
+    !sections.some((s) => s.source === "generated" && s.content);
 
   const spend = activity.reduce(
     (total, entry) =>
@@ -207,48 +238,20 @@ export default async function ProposalEditorPage({
           blocking={readiness.blocking}
           warnings={readiness.warnings}
           spend={spend}
+          autoStart={autoStart}
+          sectionFeedback={sectionFeedback}
         />
 
-        <aside className="space-y-4 lg:sticky lg:top-20">
-          <IntakePanel proposal={proposal} editable={editable} />
-
-          {(editable || materials.length > 0) && (
-            <section className="card overflow-hidden">
-              <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-                <h2 className="text-sm font-semibold text-ink">
-                  Supporting materials
-                </h2>
-                <span className="text-2xs text-ink-subtle tabular">
-                  {materials.filter((m) => m.summarized).length} used
-                </span>
-              </header>
-
-              <div className="space-y-3 p-4">
-                {materials.length > 0 && (
-                  <MaterialList materials={materials} editable={editable} />
-                )}
-                {editable && <MaterialUploader proposalId={id} />}
-              </div>
-            </section>
-          )}
-
-          {/* Collapsed by default. The audit trail matters, but it is
-              reference material — it should not push the intake off screen. */}
-          <details className="card group overflow-hidden">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
-              <h2 className="text-sm font-semibold text-ink">Activity</h2>
-              <span className="flex items-center gap-1.5 text-2xs text-ink-subtle">
-                <span className="tabular">{activity.length}</span>
-                <Icon
-                  name="arrow-left"
-                  className="h-3 w-3 -rotate-90 transition-transform group-open:rotate-90"
-                />
-              </span>
-            </summary>
-            <div className="border-t border-line p-3">
-              <ActivityTimeline entries={activity} />
-            </div>
-          </details>
+        {/* One panel, three tabs. These were three stacked cards competing
+            with the document for attention — all worth showing, none worth
+            showing at once. */}
+        <aside className="lg:sticky lg:top-20">
+          <ProposalSidebar
+            proposal={proposal}
+            materials={materials}
+            activity={activity}
+            editable={editable}
+          />
         </aside>
       </div>
     </AppShell>

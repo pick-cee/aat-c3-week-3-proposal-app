@@ -140,6 +140,16 @@ export interface FieldProvenance {
   source: string;
   /** True once a human accepted it on the confirm screen. */
   confirmed: boolean;
+  /**
+   * Set only when the field was left EMPTY because the source touched it
+   * without settling it — "Call 14 Oct" with no year. Names what was missing.
+   *
+   * Its presence is what distinguishes the two kinds of entry: with a reason
+   * the field is empty and this explains why; without one the field is filled
+   * and this is the evidence. An empty field with no entry at all means the
+   * notes never mentioned it, which needs no explanation.
+   */
+  reason?: string;
 }
 
 export interface Proposal extends IntakeFields {
@@ -197,7 +207,23 @@ export interface Approval {
   approver_id: string;
   approver_name: string;
   decision: "approved" | "changes_requested";
+  /** Anything not about a specific section. */
   note: string | null;
+  created_at: string;
+}
+
+/**
+ * A note about ONE section, attached to one decision.
+ *
+ * The approver knows which section they object to at the moment they object to
+ * it. Making them describe the location in prose — and the salesperson find it
+ * again by reading — is work the interface can simply do.
+ */
+export interface ApprovalComment {
+  id: string;
+  approval_id: string;
+  section_key: SectionKey;
+  note: string;
   created_at: string;
 }
 

@@ -225,10 +225,18 @@ create table proposals (
   raw_notes           text,
 
   -- Where each intake value came from, when extraction proposed it:
-  --   {"client_name": {"source": "spoke with Dana Whitfield at Northwind",
-  --                    "confirmed": true}}
-  -- A field absent from this map was typed by hand. `confirmed` flips when the
-  -- salesperson accepts the confirm screen — nothing is fixed until then.
+  --   {"client_name":  {"source": "spoke with Dana Whitfield at Northwind",
+  --                     "confirmed": true},
+  --    "date_of_call": {"source": "Call 14 Oct", "reason": "no year given",
+  --                     "confirmed": false}}
+  --
+  -- An entry WITHOUT `reason` is evidence for a filled field. An entry WITH one
+  -- explains why a field is empty — the source touched it without settling it.
+  -- A field absent from the map entirely was typed by hand, or was never
+  -- mentioned in the notes at all.
+  --
+  -- `confirmed` flips when the salesperson accepts the confirm screen —
+  -- nothing is fixed until then.
   field_provenance    jsonb not null default '{}'::jsonb,
 
   -- One token per version CHAIN, not per version: a fork inherits its parent's
@@ -461,6 +469,42 @@ a new way: extraction feeds the fields that generation then treats as fixed.
   depends on scope" supports no `estimated_pricing`. Half-committing on the
   salesperson's behalf is exactly the failure the whole document is written
   against.
+
+### An empty field says why, when the source came close
+
+`date_of_call` on a note reading _"Call 14 Oct"_ comes back empty, and that is
+correct — there is no year, and inventing one is fabrication.
+
+But an empty field renders identically whether the notes never mentioned it or
+mentioned it incompletely, and those need different things from the
+salesperson: one is a question for the client, the other is a fact they already
+know. It is the same conflation as a failed fetch and an empty result producing
+one message — the thing section 7 exists to prevent for uploaded files, one
+layer up.
+
+So extraction may return, for a field it declined to fill, **the quote that
+nearly supported it plus a short reason**. The confirm screen renders it under
+the empty input in quiet type:
+
+> Notes mention _"Call 14 Oct"_ but no year given, so this was not filled in.
+
+Three constraints keep this from becoming its own problem:
+
+- **The value is still null.** Nothing about the never-invent rule changes. The
+  human supplies the value; this only removes the ambiguity about why it is
+  absent.
+- **The quote is verified exactly like a supporting one.** An explanation
+  nobody can check is worse than none, because it reads as evidence. A reason
+  whose quote is not in the source is dropped silently.
+- **Only for partial support.** A field genuinely absent from the notes shows
+  nothing. A reason under every empty input is noise, and noise is how the one
+  real explanation gets skipped.
+
+Stored in `field_provenance` alongside the supporting quotes, distinguished by
+carrying a `reason`. An entry with one explains an empty field and survives
+while the field stays empty; an entry without one is evidence for a filled
+field and survives while the value is unchanged. Filling the field in answers
+the question the reason asked, so the explanation goes.
 
 **Nothing is fixed until confirmed.** The commercial-terms guarantee therefore
 strengthens rather than weakens: *every commercial term in the finished

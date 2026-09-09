@@ -1,4 +1,4 @@
-import type { IntakeFields } from "@/lib/db/types";
+import type { IntakeFields, SectionKey } from "@/lib/db/types";
 
 
 export interface Fabrication {
@@ -97,6 +97,12 @@ function authorizedTokens(intake: Partial<IntakeFields>): Set<string> {
 export function verifyCommercialTerms(
   content: string,
   intake: Partial<IntakeFields>,
+  /**
+   * Which section this is. Optional so existing callers keep working, but the
+   * name check needs it — see `checkNames`. Without it, name warnings are
+   * skipped rather than guessed.
+   */
+  sectionKey?: SectionKey,
 ): VerificationResult {
   const authorized = authorizedTokens(intake);
   const fabrications: Fabrication[] = [];
@@ -122,7 +128,7 @@ export function verifyCommercialTerms(
 
   return {
     fabrications,
-    warnings: checkNames(content, intake),
+    warnings: checkNames(content, intake, sectionKey),
     ok: fabrications.length === 0,
   };
 }
@@ -131,16 +137,36 @@ export function verifyCommercialTerms(
  * Names: present in some recognisable form, or warn.
  *
  * Containment on a normalized string, and a first-word fallback so "Acme" is
- * accepted for "Acme Corp Ltd". This is looser than the number check on
- * purpose — a paraphrased company name is a style question for a human, not a
- * fabrication.
+ * accepted for "Acme Corp Ltd". Looser than the number check on purpose — a
+ * paraphrased company name is a style question for a human, not a fabrication.
+ *
+ * WHICH sections are checked matters as much as how.
+ *
+ * The contact's personal name belongs in the sections that address them — the
+ * opening and the close. Deliverables is a list of things; naming Grace in it
+ * would be strange, and warning that it does not is telling a salesperson to
+ * fix prose that is already right. A checker that fires on correct output
+ * teaches people to ignore it, which costs more than it ever saves.
+ *
+ * The company name is different: it is the subject of the whole document, so
+ * every section may reasonably carry it, and none is required to.
  */
 function checkNames(
   content: string,
   intake: Partial<IntakeFields>,
+  sectionKey?: SectionKey,
 ): NameWarning[] {
   const warnings: NameWarning[] = [];
   const haystack = content.toLowerCase().replace(/\s+/g, " ");
+
+  const mentions = (value: string): boolean => {
+    const needle = value.toLowerCase().replace(/\s+/g, " ");
+    if (haystack.includes(needle)) return true;
+
+    // "Acme" satisfies "Acme Corp Ltd" — the distinctive part is present.
+    const firstWord = needle.split(" ")[0]!;
+    return firstWord.length >= 3 && haystack.includes(firstWord);
+  };
 
   const check = (
     field: NameWarning["field"],
@@ -148,14 +174,7 @@ function checkNames(
     label: string,
   ) => {
     const expected = (value ?? "").trim();
-    if (expected === "") return;
-
-    const needle = expected.toLowerCase().replace(/\s+/g, " ");
-    if (haystack.includes(needle)) return;
-
-    // "Acme" satisfies "Acme Corp Ltd" — the distinctive part is present.
-    const firstWord = needle.split(" ")[0]!;
-    if (firstWord.length >= 3 && haystack.includes(firstWord)) return;
+    if (expected === "" || mentions(expected)) return;
 
     warnings.push({
       field,
@@ -164,8 +183,20 @@ function checkNames(
     });
   };
 
-  check("client_name", intake.client_name, "client name");
-  check("company_name", intake.company_name, "company name");
+  // Only where the section is written TO the client. When the key is unknown
+  // — a caller that has not said which section this is — the check is skipped
+  // rather than guessed at, because a false warning is worse than none.
+  const ADDRESSES_THE_CLIENT: SectionKey[] = ["introduction", "next_steps"];
+  if (sectionKey && ADDRESSES_THE_CLIENT.includes(sectionKey)) {
+    check("client_name", intake.client_name, "client name");
+  }
+
+  // The company can appear anywhere, but a section that never names it is only
+  // worth flagging if it names no party at all — otherwise "your team" and
+  // "you" are perfectly good prose in a letter.
+  if (sectionKey === "introduction") {
+    check("company_name", intake.company_name, "company name");
+  }
 
   return warnings;
 }
