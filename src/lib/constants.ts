@@ -31,6 +31,16 @@ export const MIN_USEFUL_CHARS = 25;
 /** A 200-page PDF is truncated with a visible note rather than sent whole. */
 export const MAX_EXTRACTED_CHARS_PER_FILE = 40_000;
 
+/**
+ * How much raw extract stands in for a missing summary.
+ *
+ * A file whose summarization failed still has usable text, and dropping it
+ * silently is worse than sending a truncated version. Kept well below the
+ * per-file extraction cap because this text goes to EVERY section call —
+ * which is the reason summaries exist in the first place.
+ */
+export const MAX_UNSUMMARIZED_CHARS = 4_000;
+
 /** Total across all materials on one proposal. */
 export const MAX_EXTRACTED_CHARS_TOTAL = 120_000;
 

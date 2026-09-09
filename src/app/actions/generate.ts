@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 
 import { logActivity } from "@/lib/activity";
 import { requireProfile } from "@/lib/auth";
-import { MAX_REGENERATIONS_PER_SECTION } from "@/lib/constants";
+import {
+  MAX_REGENERATIONS_PER_SECTION,
+  MAX_UNSUMMARIZED_CHARS,
+} from "@/lib/constants";
 import { getServerClient } from "@/lib/db/server";
 import type {
   Profile,
@@ -397,23 +400,41 @@ async function loadMaterialSummaries(proposalId: string): Promise<{
 }> {
   const db = await getServerClient();
 
-  // Only summarized materials reach generation. A file over the cap, unreadable
-  // or empty is visible in the UI with its reason, but it has nothing to
-  // contribute here.
+  // Every material that has usable content reaches generation.
+  //
+  // This used to filter on `summarized = true`, which silently dropped any
+  // file whose Haiku call failed — the extracted text was sitting right there
+  // and the comment in materials.ts even claimed generation could use it, but
+  // nothing ever passed it on. A readable file contributing nothing to the
+  // proposal is the failure this whole area exists to prevent.
+  //
+  // A file that is unreadable, empty, or over the summarization cap still has
+  // nothing to give: those are excluded below, and each is visible in the UI
+  // with its reason.
   const { data } = await db
     .from("supporting_materials")
     .select("*")
     .eq("proposal_id", proposalId)
-    .eq("summarized", true)
+    .eq("extraction_status", "ok")
     .order("created_at", { ascending: true });
 
   const materials = (data ?? []) as SupportingMaterial[];
 
+  // Prefer the summary; fall back to the extracted text when summarization
+  // failed. Truncated, because raw text is far larger than a summary and it
+  // is sent to EVERY section call — the reason summaries exist at all.
+  const usable = materials.filter((m) => m.summary || m.extracted_text);
+
   return {
-    summaries: materials
-      .filter((m) => m.summary)
-      .map((m) => ({ filename: m.filename, summary: m.summary! })),
-    ids: materials.map((m) => m.id),
+    summaries: usable.map((m) => ({
+      filename: m.filename,
+      summary:
+        m.summary ??
+        `[Not summarized — raw extract]\n\n${
+          m.extracted_text!.slice(0, MAX_UNSUMMARIZED_CHARS)
+        }`,
+    })),
+    ids: usable.map((m) => m.id),
   };
 }
 
