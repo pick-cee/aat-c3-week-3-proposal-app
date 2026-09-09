@@ -14,6 +14,7 @@ import {
   verifyCommercialTerms,
   type NameWarning,
 } from "@/lib/verify/commercial-terms";
+import { checkMaterialUse } from "@/lib/verify/material-use";
 import { buildSectionPrompt, systemPrompt } from "./prompts";
 
 
@@ -102,6 +103,42 @@ export async function generateSection(
     );
 
     if (verification.ok) {
+      // Did it actually use the documents the client sent?
+      //
+      // Instruction alone did not hold: proposals were written that referenced
+      // no attachment at all, twice, and the details a client takes the trouble
+      // to send are usually the specifics that make the proposal theirs. So it
+      // is measured and retried, like a fabricated figure — but only on the
+      // first attempt, and only for the sections where specifics belong.
+      //
+      // Introduction and Next Steps are exempt: an opening that thanks someone
+      // and a close about signing an agreement have no business reciting depot
+      // counts, and warning that they do not would be the false-positive
+      // failure all over again.
+      const CITES_DETAIL: SectionKey[] = ["solution", "deliverables"];
+
+      if (
+        attempt === 1 &&
+        CITES_DETAIL.includes(input.sectionKey) &&
+        input.materialSummaries.length > 0
+      ) {
+        const materialUse = checkMaterialUse(content, input.materialSummaries);
+
+        if (materialUse.ignored) {
+          attempts.push({
+            usage,
+            outcome: "rejected",
+            reason: materialUse.note!,
+          });
+          feedback =
+            `Your previous attempt did not use the documents the client sent. ` +
+            `Read the summaries again and ground this section in what is ` +
+            `actually in them — a named system, a volume, a constraint. Do not ` +
+            `invent detail to satisfy this: use what is there.`;
+          continue;
+        }
+      }
+
       attempts.push({ usage, outcome: "accepted" });
       return {
         status: "ok",

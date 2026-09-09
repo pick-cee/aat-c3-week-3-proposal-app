@@ -13,6 +13,7 @@ import {
   INTAKE_FIELD_LABELS,
   type IntakeFields,
 } from "@/lib/db/types";
+import { repairJson } from "./repair-json";
 import {
   verifyProposals,
   type ExtractedField,
@@ -202,15 +203,67 @@ function parseResponse(raw: string): Record<string, RawProposal> {
     );
   }
 
+  const slice = candidate.slice(start, end + 1);
+
   try {
-    return JSON.parse(candidate.slice(start, end + 1)) as Record<
-      string,
-      RawProposal
-    >;
-  } catch {
-    throw new Error(
-      "Claude returned malformed JSON. Nothing has been saved — try again, or " +
-      "fill the form in directly.",
+    return JSON.parse(slice) as Record<string, RawProposal>;
+  } catch (firstError) {
+    // Try to repair before giving up.
+    //
+    // The `source` field is a verbatim quote from the notes, so it routinely
+    // contains the two things that break JSON: raw newlines (notes are
+    // multi-line) and unescaped double quotes (a salesperson writing
+    // `the "where is my delivery" calls` is quoting the client). The model is
+    // asked to escape them and mostly does — but "mostly" means a salesperson
+    // occasionally loses an entire extraction to a punctuation mark.
+    //
+    // Repairing is safe here because the content is not trusted anyway: every
+    // value still has to survive `verifyProposals`, which checks the quote
+    // actually appears in the source.
+    try {
+      return JSON.parse(repairJson(slice)) as Record<string, RawProposal>;
+    } catch {
+      // Fall through and report the ORIGINAL error, which describes what the
+      // model actually produced rather than what repair made of it.
+    }
+
+    const error = firstError;
+    // Keep the raw response.
+    //
+    // This used to throw a bare "malformed JSON", which threw away the only
+    // thing that could explain WHY — leaving nobody able to tell a truncated
+    // response from an unescaped quote from a model that wrapped its answer in
+    // prose. Every other failure in this application keeps the provider's own
+    // error for exactly this reason; this one did not.
+    const detail = error instanceof Error ? error.message : String(error);
+    const truncated = raw.length > 1200 ? `${raw.slice(0, 1200)}…` : raw;
+
+    console.error(
+      `[extract] JSON parse failed: ${detail}` +
+        `\n--- raw response (${raw.length} chars) ---\n${truncated}`,
     );
+
+    throw new ExtractionParseError(detail, raw);
   }
 }
+
+/**
+ * A parse failure that carries the response that caused it.
+ *
+ * The user-facing message stays plain — they can retry or fill the form in —
+ * but the raw text reaches the log and the activity trail, so the next
+ * occurrence is diagnosable instead of a shrug.
+ */
+export class ExtractionParseError extends Error {
+  constructor(
+    readonly detail: string,
+    readonly raw: string,
+  ) {
+    super(
+      "Claude did not return the expected format. Nothing has been saved — " +
+        "try again, or fill the form in directly.",
+    );
+    this.name = "ExtractionParseError";
+  }
+}
+

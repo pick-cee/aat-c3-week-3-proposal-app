@@ -7,7 +7,10 @@ import { requireProfile } from "@/lib/auth";
 import { getServerClient } from "@/lib/db/server";
 import type { IntakeFields, Proposal, SupportingMaterial } from "@/lib/db/types";
 import { RuleViolation } from "@/lib/errors";
-import { extractIntake } from "@/lib/extract/intake";
+import {
+  ExtractionParseError,
+  extractIntake,
+} from "@/lib/extract/intake";
 import { assertAuthor, assertEditable, assertNotApproverEditing } from "@/lib/guards";
 import { checkRateLimit, rateLimitMessage } from "@/lib/rate-limit";
 import { SECTION_DEFINITIONS } from "@/lib/sections";
@@ -197,11 +200,22 @@ export async function extractFromNotes(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
+    // A parse failure carries the response that caused it. Recording a slice of
+    // it here means the next occurrence can be diagnosed from the activity
+    // trail rather than needing someone watching the server log at the moment
+    // it happened.
+    const detail =
+      error instanceof ExtractionParseError
+        ? `Intake extraction failed: ${error.detail}. Claude returned: ${
+            error.raw.slice(0, 400)
+          }${error.raw.length > 400 ? "…" : ""}`
+        : `Intake extraction failed: ${message}`;
+
     await logActivity({
       proposalId,
       actorName: actor.full_name,
       event: "generation_failed",
-      detail: `Intake extraction failed: ${message}`,
+      detail,
     });
 
     // The notes are saved and the draft exists; the salesperson can retry or
