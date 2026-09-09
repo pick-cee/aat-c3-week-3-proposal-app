@@ -135,6 +135,35 @@ A fork therefore costs **zero model calls**. That is the property to protect: if
 forking is expensive, people will edit approved documents instead, and rule 2
 becomes the thing they route around.
 
+### A version forks at most once
+
+Two forks from the same parent produce two rows both numbered N+1 and both
+claiming to continue it. The chain stops being a chain: the version number no
+longer identifies a document, and `get_shared_proposal` walking the chain has
+two equally valid answers.
+
+This is not a double-click race. It is the ordinary way the mistake happens: a
+salesperson forks v1 to v2, works on v2, then later opens v1 — it is still on
+the queue, and it is the version they know — and presses the same button
+expecting v3. Nothing on v1 said it had already been continued, so the button
+did exactly what it offered and made a second v2. Both then sit on the queue
+looking identical.
+
+**A frozen version that already has a child offers no fork control.** In its
+place, the panel names the version that continued it and links there, and says
+where the next version comes from: open the current one and edit it from there.
+
+**The server does not merely refuse the second fork — it resolves to the
+existing child.** Refusing would be safe and useless; the salesperson's intent
+("edit this proposal's current work") is entirely reasonable and is satisfiable,
+just by a different row. Forking is meant to be free and unremarkable, and an
+error message here would make a correct action feel dangerous. The action is
+therefore idempotent: fork when there is no child, redirect to it when there is,
+and either way the salesperson lands on the version they should be editing.
+
+Enforced server-side in `forkProposal`, not only in the panel — the panel is
+what makes the rule visible, not what makes it true.
+
 ---
 
 ## 3. Roles
@@ -282,9 +311,11 @@ create table proposal_sections (
   last_generated_at timestamptz,       -- null for source='template'
 
   -- Why this section may no longer match what it was built on. Empty means
-  -- current. Entries are tagged: {"kind":"intake","field":"client_name"} or
-  -- {"kind":"section","section_key":"solution"}. Set by the intake-write diff
-  -- and by regeneration of an earlier section; cleared on regeneration.
+  -- current. Entries are tagged: {"kind":"intake","field":"client_name"},
+  -- {"kind":"section","section_key":"solution"}, or
+  -- {"kind":"material","filename":"brief.pdf"}. Set by the intake-write diff,
+  -- by regeneration of an earlier section, and by a material finishing
+  -- extraction after this section was written; cleared on regeneration.
   stale_fields      jsonb not null default '[]'::jsonb,
 
   unique (proposal_id, section_key)
@@ -763,6 +794,40 @@ duties exists to protect.
 Template sections are exempt — they re-render from intake automatically, so they
 cannot be stale. Their `generated_from` is null.
 
+### A document arriving after the writing makes it stale too
+
+The ordinary sequence: the salesperson generates the proposal, then the client
+emails the requirements doc they promised on the call. Every section on screen
+was written without it. Nothing on the page says so, and the prose still reads
+well — which is exactly what makes this the quiet failure. The salesperson sends
+a proposal that ignores the document the client sent two hours earlier.
+
+Neither existing detector catches it. The intake snapshot diff sees no changed
+field, because none changed. The regeneration marker fires only on regeneration.
+The inputs to generation are intake *and materials*, and only half of that was
+being watched.
+
+So it is the third `stale_fields` kind: `{"kind":"material","filename":"..."}`,
+appended to every `generated` section that already has content when a newly
+uploaded file finishes extracting. The marker reads _"Northwind RFP.pdf was
+uploaded after this section was written, so none of what it says is reflected
+here."_
+
+Three details, each of which is the difference between a useful signal and a
+nuisance:
+
+- **Marked when extraction succeeds, not at upload.** A file that turns out to
+  be unreadable informs nothing, so flagging sections against it would be a
+  false alarm — and false alarms are how a marker gets ignored.
+- **Sections with no content yet are skipped.** They will be written with the
+  file included; there is nothing to be stale.
+- **The filename is stored, not the material id.** The marker must stay readable
+  after the file is deleted, and the filename is the part a salesperson
+  recognises.
+
+Same non-blocking treatment as the other two kinds: a marker and a regenerate
+button, never a silent regeneration. Logged as `sections_marked_stale`.
+
 ### Cost ceilings
 
 Generation is the only expensive thing this application does, and every path to
@@ -865,10 +930,30 @@ it, proposal cards with a large status pill, client name, who it is with, and
 how long it has been sitting. Colour carries state. A stale proposal in review
 looks different from a fresh one.
 
+Ordering is three bands — failed sends, then whatever needs this person, then
+everything else — and the direction **within** a band depends on what the band
+is for. The first two are work someone owes, so they run **oldest first**: a
+proposal sitting unreviewed for three days must not be pushed down the page by
+one submitted this morning. The last band owes nobody anything; it is a record.
+Nothing in it is urgent, so age is the wrong axis entirely and recency is the
+useful one — what a salesperson looks for there is the proposal they just
+touched, and oldest-first buries it under every proposal they have ever sent.
+
+Every other list in the application is **most recent first**, with two
+deliberate exceptions: sections order by `position`, because that is the
+document's own order and not a chronology, and the rate-limit window reads
+oldest-first because it is computing when the window resets.
+
 **Notes** — one large textarea for raw call notes and a drop zone for
 supporting files. Either alone is enough to proceed. A visible "skip and fill
 the form myself" path, because a salesperson with a clean brief should not be
-walked through a stage they do not need.
+walked through a stage they do not need. Also a **discard** control: the
+proposal row is created the moment "New proposal" is clicked, because uploads
+need something to attach to, so without a way out every abandoned start leaves
+an "Untitled proposal" on the queue. Discard deletes the row only if it is
+genuinely empty — no notes, no intake values, no files — and otherwise says why
+it was kept. A tidy queue is worth far less than never destroying someone's
+work.
 
 **Confirm** — the intake form, pre-filled from extraction. Each populated field
 carries the source phrase beneath it in quiet type, so the eye lands on the
@@ -892,7 +977,8 @@ if anything blocking is missing, and warns — without blocking — if any secti
 stale.
 
 **Review** — read-only, with the intake shown alongside so the approver can
-check the proposal against what was actually agreed. Stale sections carry the
+check the proposal against what was actually agreed. Reached from the queue, or
+from the email that submission sends. Stale sections carry the
 same marker they do in the editor: the approver is the person separation of
 duties exists to protect, and hiding from them that a section predates its own
 inputs would defeat the point. Approve, or request changes with a required note.
@@ -901,6 +987,67 @@ approver never sees a send control; delivery belongs to the salesperson.
 
 **Client view** — public, tokenized URL. Clean typeset proposal, no application
 chrome. This is what the email links to.
+
+**Preview** — the client view, authenticated, before anything is sent. Reached
+from the send panel. Sending is the one irreversible act in the system, and
+until this screen existed the last thing a salesperson saw before doing it was a
+column of editor cards — section headers, regenerate buttons, staleness markers,
+token counts. None of that is in the document. Whether the proposal *reads* as
+one continuous piece of writing was not observable anywhere.
+
+Two things about how it is built matter more than the screen itself:
+
+- **It renders the same component as the public client view.** Two
+  implementations of "the document" would look identical until one was edited,
+  and the one nobody notices drifting is the one the client reads. A preview
+  that is an approximation of what gets sent is worse than none, because it is
+  trusted.
+- **It is a separate authenticated route, not the token URL.** The token
+  resolves through `get_shared_proposal`, which by design returns only versions
+  with a successful delivery — so pointing a salesperson at their own token
+  before sending would show them a 404. That restriction is right and stays; the
+  preview needs a different door, scoped to the proposal's own people.
+
+### Submitting for review tells the approver
+
+Submission sets a status and redirects. Without a notification, the approver
+finds out by happening to open the queue — and `STALE_IN_REVIEW_HOURS` only
+surfaces a forgotten proposal after two days, on the queue, to the person who is
+not looking at it. Meanwhile the salesperson is blocked and does not know why.
+The separation of duties is the point of this system; a handoff that depends on
+someone refreshing a page is not a handoff.
+
+So submission emails every approver a link to the review screen. Three
+constraints:
+
+- **The author is skipped**, even if they hold the approver role. They cannot
+  approve their own work, so telling them it is waiting for them would be worse
+  than silence.
+- **It goes through the same demo redirect as client mail.** A demo application
+  must not be able to email a stranger, and an approver address in a seeded
+  database is exactly the kind of address that could belong to someone real.
+- **Failure is non-fatal.** The submission has already happened and is correct
+  in the database; an email provider being down must not roll it back or show
+  the salesperson an error about work that succeeded.
+
+### Nothing typed is lost to a stray click
+
+Two screens hold text that exists nowhere but the browser: the notes textarea,
+which can hold an entire discovery call, and an open section editor. Closing the
+tab or clicking a nav link threw all of it away silently. That loss is
+unrecoverable and it is the kind that makes someone stop trusting a tool
+altogether.
+
+Both are guarded while they hold unsaved changes, in two layers because they
+catch different exits: `beforeunload` for the browser leaving, and a
+capture-phase click handler for in-app navigation, which `beforeunload` never
+sees because the page is not unloading. The second is the likelier exit — the
+nav sits at the top of the very screen being typed into.
+
+The guard is suppressed for deliberate exits. Discarding a draft is a choice
+already made, and asking "are you sure you want to leave?" about a draft
+someone has just chosen to throw away is noise that teaches people to click
+through warnings.
 
 ### The client link outlives the version
 
@@ -930,15 +1077,17 @@ not in the page — the page renders whatever it is given.
 
 The word covers two unrelated conditions and the UI must not blur them:
 
-- **A stale *section*** predates its own intake — someone edited a field after
-  the section was written. A property of one section, shown on its card in the
-  editor and review screens. See section 6.
+- **A stale *section*** predates something it was built on — an edited intake
+  field, an earlier section that was regenerated, or a document uploaded after
+  it was written. A property of one section, shown on its card in the editor and
+  review screens. See section 6, where all three causes share one column and one
+  clearing rule.
 - **A stale *proposal*** has been sitting in review too long. A property of the
   whole proposal, shown on the queue.
 
 They share no mechanism and never appear in the same place. Different words in
-the interface: a section says _"intake changed since this was written"_, a
-proposal says _"waiting 3 days"_.
+the interface: a section names what changed — _"intake changed since this was
+written"_ — a proposal says _"waiting 3 days"_.
 
 `STALE_IN_REVIEW_HOURS = 48`, a named configurable constant. A proposal in
 review past it is surfaced on the queue rather than waiting to be noticed. "Too
@@ -948,6 +1097,28 @@ long" needs a number or it is not a rule.
 
 A number the system does not have. Missing values render as an explicit
 `[To be confirmed]` marker, styled so it is obvious in a client-facing document.
+
+**And the marker must not reach the client either.** It exists to stop the model
+inventing a number, and it does that job — but it is honest only up to the point
+where someone sends it. A proposal that tells a client _"the fee is [To be
+confirmed]"_ is worse than one that never mentions the fee: it says out loud
+that nobody checked.
+
+The marker survives to the send screen easily. It is designed to look like part
+of the document, it sits inside otherwise-finished prose, and by then the
+salesperson has read those sections several times and stopped seeing them.
+
+So sending is interrupted once. If any section still contains the marker, the
+first attempt does not send: it names the sections, quotes what the client would
+read, and offers two ways forward — go back and fill it in, or send it anyway.
+The second is a real option, because sometimes a placeholder is deliberate and a
+human is entitled to that call; it just may not be made by accident. Choosing it
+is recorded in `activity_log`, so an acknowledged placeholder is distinguishable
+afterwards from one nobody saw.
+
+The approver sees the same warning on the review screen, worded for their
+decision: approving it as it stands means approving the placeholder. They are
+the last person who can catch this before a client does.
 
 ---
 
@@ -965,7 +1136,12 @@ Every failure gets a state, a written reason and a place in `activity_log`.
   say which field changed. Not an error and not blocking: the document is
   internally fine, it just predates its inputs, and the salesperson decides
   whether that matters. Logged as `sections_marked_stale`.
+- **A file is uploaded after the sections were written** — the same treatment,
+  naming the file rather than a field. See section 6.
 - **A file cannot be parsed** — recorded, shown, generation continues without it.
+- **A proposal reaches the send screen still carrying `[To be confirmed]`** —
+  the send is interrupted once with the placeholder quoted, and proceeds only on
+  a second, explicit confirmation. See section 9.
 - **Send fails** — see the dedicated section below. This is the most serious
   state in the system and gets its own treatment.
 - **A proposal sits in review past `STALE_IN_REVIEW_HOURS`** — surfaced on the

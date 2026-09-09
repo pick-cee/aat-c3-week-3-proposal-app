@@ -112,12 +112,18 @@ export interface FieldGap {
 
 /**
  * Why a section may no longer match what it was built on. Tagged because the
- * two causes are different — an edited intake field, or an earlier section
- * being regenerated — but the UI treats them identically.
+ * causes are different — an edited intake field, an earlier section being
+ * regenerated, or a document arriving after the writing was done — but the UI
+ * treats them identically.
+ *
+ * `material` carries the filename rather than an id: the marker has to stay
+ * readable after the file itself is deleted, and "written before Northwind
+ * RFP.pdf was uploaded" is the sentence a salesperson can act on.
  */
 export type StaleReason =
   | { kind: "intake"; field: keyof IntakeFields }
-  | { kind: "section"; section_key: SectionKey };
+  | { kind: "section"; section_key: SectionKey }
+  | { kind: "material"; filename: string };
 
 // --- Rows ------------------------------------------------------------------
 

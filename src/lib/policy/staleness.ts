@@ -54,9 +54,16 @@ export function mergeStaleReasons(
 }
 
 function keyOf(reason: StaleReason): string {
-  return reason.kind === "intake"
-    ? `intake:${reason.field}`
-    : `section:${reason.section_key}`;
+  // A switch rather than a ternary chain: adding a fourth kind should be a
+  // type error here, not a marker that silently collides with another.
+  switch (reason.kind) {
+    case "intake":
+      return `intake:${reason.field}`;
+    case "section":
+      return `section:${reason.section_key}`;
+    case "material":
+      return `material:${reason.filename}`;
+  }
 }
 
 /**
@@ -87,6 +94,18 @@ export function stalenessMessage(reasons: StaleReason[]): string | null {
     parts.push(
       `${listOf(sections)} ${sections.length === 1 ? "was" : "were"
       } regenerated after this was written.`,
+    );
+  }
+
+  const materials = reasons
+    .filter((r): r is Extract<StaleReason, { kind: "material" }> => r.kind === "material")
+    .map((r) => r.filename);
+
+  if (materials.length > 0) {
+    parts.push(
+      `${listOf(materials)} ${materials.length === 1 ? "was" : "were"
+      } uploaded after this section was written, so none of what ${materials.length === 1 ? "it says" : "they say"
+      } is reflected here.`,
     );
   }
 

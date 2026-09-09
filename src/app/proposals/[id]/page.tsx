@@ -47,11 +47,12 @@ export default async function ProposalEditorPage({
         .select("*")
         .eq("proposal_id", id)
         .order("position", { ascending: true }),
+      // Newest first: the file just uploaded is the one being looked for.
       db
         .from("supporting_materials")
         .select("*")
         .eq("proposal_id", id)
-        .order("created_at", { ascending: true }),
+        .order("created_at", { ascending: false }),
       db
         .from("activity_log")
         .select("*")
@@ -85,10 +86,28 @@ export default async function ProposalEditorPage({
         } not been written yet.`
       : null;
 
-  const deliveries =
-    proposal.status === "approved" || proposal.status === "sent"
-      ? await loadDeliveries(id)
-      : [];
+  const isFrozen = proposal.status === "approved" || proposal.status === "sent";
+
+  const deliveries = isFrozen ? await loadDeliveries(id) : [];
+
+  // Has this version already been continued? Only frozen versions offer the
+  // fork control, so this is the only place the answer matters. Without it the
+  // button reads "Edit as version N+1" on a version that already has one, and
+  // pressing it makes a second version with the same number.
+  const { data: successorRow } = isFrozen
+    ? await db
+        .from("proposals")
+        .select("id, version, status")
+        .eq("parent_id", id)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle()
+    : { data: null };
+
+  const successor = successorRow as Pick<
+    Proposal,
+    "id" | "version" | "status"
+  > | null;
 
   const recipient = resolveRecipient(proposal.client_email?.trim() ?? "");
 
@@ -205,6 +224,7 @@ export default async function ProposalEditorPage({
             proposal={proposal}
             blockingReason={submitBlockedReason}
             staleCount={staleCount}
+            successor={successor}
           />
         </div>
       )}
@@ -220,6 +240,10 @@ export default async function ProposalEditorPage({
               actualRecipient={recipient.actual}
               demoMode={recipient.demoMode}
               deliveries={deliveries}
+              // Not `/p/${share_token}`: that route reads through
+              // `get_shared_proposal`, which returns only versions that have
+              // actually been delivered, so before sending it would 404.
+              previewUrl={`/proposals/${id}/preview`}
             />
           </div>
         )}

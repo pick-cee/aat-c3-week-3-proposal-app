@@ -20,6 +20,8 @@ import {
   assertForkable,
 } from "@/lib/guards";
 import { assessReadiness } from "@/lib/policy/fields";
+import { notifyApprovers } from "@/lib/email/notify";
+import { placeholderWarning } from "@/lib/policy/placeholders";
 import { GENERATED_SECTIONS } from "@/lib/sections";
 
 /** Submits a draft for review. */
@@ -77,14 +79,23 @@ export async function submitForReview(proposalId: string): Promise<void> {
     (s) => (s.stale_fields ?? []).length > 0,
   ).length;
 
+  // Recorded, not blocked. Sending with a placeholder is sometimes the right
+  // call; doing it without anyone noticing is not.
+  const placeholders = placeholderWarning(sections);
+
   await logActivity({
     proposalId,
     actorName: actor.full_name,
     event: "submitted",
-    detail:
+    detail: [
+      "Submitted for review.",
       staleCount > 0
-        ? `Submitted for review with ${staleCount} section(s) marked out of date.`
-        : "Submitted for review.",
+        ? `${staleCount} section(s) marked out of date.`
+        : null,
+      placeholders,
+    ]
+      .filter(Boolean)
+      .join(" "),
   });
 
   revalidatePath(`/proposals/${proposalId}`);
@@ -268,6 +279,31 @@ export async function forkProposal(proposalId: string): Promise<void> {
 
   const parent = data as Proposal;
   assertForkable(parent, actor);
+
+  // Forking twice from the same parent produces two versions numbered N+1 that
+  // both claim to continue it, and the chain stops being a chain.
+  //
+  // This is not a double-click race — it is the ordinary way the mistake
+  // happens. A salesperson forks v1 to v2, works on v2, then later opens v1
+  // (it is still on the queue, and it is the version they know) and presses
+  // the same button expecting v3. Nothing about v1 said it had already been
+  // continued, so the button did exactly what it said and made a second v2.
+  //
+  // The fix is to satisfy the intent rather than refuse it: the salesperson
+  // wants to edit this proposal's current work, so send them to the version
+  // that already carries it. Forking is meant to be free and unremarkable, and
+  // an error message here would make it feel dangerous.
+  const { data: existingChild } = await db
+    .from("proposals")
+    .select("id")
+    .eq("parent_id", parent.id)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (existingChild) {
+    redirect(`/proposals/${existingChild.id}`);
+  }
 
   const [{ data: sectionRows }, { data: materialRows }] = await Promise.all([
     db.from("proposal_sections").select("*").eq("proposal_id", proposalId),

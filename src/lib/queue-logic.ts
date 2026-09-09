@@ -87,10 +87,23 @@ export function whoNeedsToAct(
 }
 
 /**
- * Failed sends first, then whatever needs this person, then oldest first.
+ * Failed sends first, then whatever needs this person, then everything else.
  *
  * The failed band ignores age entirely: a send that failed three weeks ago is
  * still a client sitting with nothing.
+ *
+ * Within a band, the direction depends on what the band is for, and the two
+ * answers genuinely differ:
+ *
+ *   The first two bands are work someone owes. There the thing that has been
+ *   waiting longest is the most urgent, so they run oldest first — a proposal
+ *   sitting unreviewed for three days must not be pushed down the page by one
+ *   submitted this morning.
+ *
+ *   The last band owes nobody anything; it is a record. Nothing in it is
+ *   urgent, so age is the wrong axis entirely and recency is the useful one —
+ *   what a salesperson looks for there is the proposal they just touched, and
+ *   oldest-first buries it under every proposal they have ever sent.
  */
 export function compareQueueItems(a: QueueItem, b: QueueItem): number {
   const band = (item: QueueItem) => {
@@ -99,9 +112,14 @@ export function compareQueueItems(a: QueueItem, b: QueueItem): number {
     return 2;
   };
 
-  const bandDiff = band(a) - band(b);
+  const bandOf = band(a);
+  const bandDiff = bandOf - band(b);
   if (bandDiff !== 0) return bandDiff;
 
+  // Nothing outstanding: most recently touched first.
+  if (bandOf === 2) return a.ageHours - b.ageHours;
+
+  // Outstanding work: longest-waiting first.
   return b.ageHours - a.ageHours;
 }
 

@@ -14,6 +14,7 @@ import type {
   ProposalSection,
   SupportingMaterial,
 } from "@/lib/db/types";
+import { placeholderWarning } from "@/lib/policy/placeholders";
 
 /**
  * The review screen.
@@ -53,11 +54,13 @@ export default async function ReviewPage({
         .select("*")
         .eq("proposal_id", id)
         .order("created_at", { ascending: false }),
+      // Newest first — the most recently added evidence is what an approver
+      // has not seen before.
       db
         .from("supporting_materials")
         .select("*")
         .eq("proposal_id", id)
-        .order("created_at", { ascending: true }),
+        .order("created_at", { ascending: false }),
     ]);
 
   const sections = (sectionRows ?? []) as ProposalSection[];
@@ -86,6 +89,9 @@ export default async function ReviewPage({
   const staleCount = sections.filter(
     (s) => (s.stale_fields ?? []).length > 0,
   ).length;
+
+  // The approver is the last person who can catch this before a client does.
+  const placeholders = placeholderWarning(sections);
 
   return (
     <AppShell actor={actor} backTo="/queue">
@@ -119,6 +125,15 @@ export default async function ReviewPage({
             status={proposal.status}
           />
         </div>
+      )}
+
+      {placeholders && (
+        <Note tone="warning" title="This is not finished" className="mt-5">
+          <p className="text-ink">{placeholders}</p>
+          <p className="mt-1.5 text-xs">
+            Approving it as it stands means approving the placeholder.
+          </p>
+        </Note>
       )}
 
       {canDecide && staleCount > 0 && (

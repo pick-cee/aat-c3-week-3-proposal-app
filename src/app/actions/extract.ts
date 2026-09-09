@@ -1,6 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 
 import { logActivity } from "@/lib/activity";
 import { requireProfile } from "@/lib/auth";
@@ -224,8 +224,22 @@ export async function extractFromNotes(
   }
 }
 
-/** Abandons an empty draft, so a cancelled notes screen leaves no litter. */
-export async function discardIfEmpty(proposalId: string): Promise<void> {
+/**
+ * Abandons an empty draft, so a cancelled notes screen leaves no litter.
+ *
+ * Starting a proposal creates the row immediately — materials need something to
+ * hang off — so every abandoned start leaves an "Untitled proposal" on the
+ * queue. A handful of those and the queue stops being a list of real work,
+ * which is the one thing it has to be.
+ *
+ * Returns whether the row was actually removed rather than redirecting, so the
+ * caller can tell the salesperson the truth when it was kept. Deleting is
+ * refused whenever anything was typed or uploaded: a tidy queue is worth far
+ * less than never destroying someone's work.
+ */
+export async function discardIfEmpty(
+  proposalId: string,
+): Promise<{ discarded: boolean; reason?: string }> {
   const actor = await requireProfile();
   const db = await getServerClient();
 
@@ -235,11 +249,20 @@ export async function discardIfEmpty(proposalId: string): Promise<void> {
     .eq("id", proposalId)
     .single();
 
-  if (!data) return;
+  if (!data) return { discarded: false, reason: "It no longer exists." };
 
   const proposal = data as Proposal;
-  if (proposal.author_id !== actor.id) return;
-  if (proposal.status !== "draft") return;
+
+  if (proposal.author_id !== actor.id) {
+    return { discarded: false, reason: "It is not yours to discard." };
+  }
+
+  if (proposal.status !== "draft") {
+    return {
+      discarded: false,
+      reason: "It has already been submitted, so it is kept.",
+    };
+  }
 
   // Only if genuinely untouched — never delete work.
   const hasContent =
@@ -248,15 +271,26 @@ export async function discardIfEmpty(proposalId: string): Promise<void> {
     proposal.company_name ||
     proposal.client_needs_summary;
 
-  if (hasContent) return;
+  if (hasContent) {
+    return {
+      discarded: false,
+      reason: "It has notes or intake details on it, so it was kept.",
+    };
+  }
 
   const { count } = await db
     .from("supporting_materials")
     .select("id", { count: "exact", head: true })
     .eq("proposal_id", proposalId);
 
-  if ((count ?? 0) > 0) return;
+  if ((count ?? 0) > 0) {
+    return {
+      discarded: false,
+      reason: "It has uploaded files on it, so it was kept.",
+    };
+  }
 
   await db.from("proposals").delete().eq("id", proposalId);
-  redirect("/queue");
+  revalidatePath("/queue");
+  return { discarded: true };
 }

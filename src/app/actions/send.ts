@@ -7,7 +7,8 @@ import { logActivity } from "@/lib/activity";
 import { requireProfile } from "@/lib/auth";
 import { getAdminClient } from "@/lib/db/admin";
 import { getServerClient } from "@/lib/db/server";
-import type { Delivery, Proposal } from "@/lib/db/types";
+import type { Delivery, Proposal, ProposalSection } from "@/lib/db/types";
+import { placeholderWarning } from "@/lib/policy/placeholders";
 import { classifySendFailure, rawErrorText } from "@/lib/email/classify";
 import { composeClientEmail } from "@/lib/email/template";
 import { env, resolveRecipient } from "@/lib/env";
@@ -17,6 +18,11 @@ import { assertSendable } from "@/lib/guards";
 
 export interface SendResult {
   ok: boolean;
+  /**
+   * The document still carries `[To be confirmed]`. Not a failure — the send
+   * has not been attempted, and will proceed if the salesperson confirms.
+   */
+  needsPlaceholderAck?: boolean;
   /** Plain-language cause when it failed. */
   reason?: string;
   /** Whether to offer a retry button. */
@@ -25,7 +31,18 @@ export interface SendResult {
   sentTo?: string;
 }
 
-export async function sendProposal(proposalId: string): Promise<SendResult> {
+export async function sendProposal(
+  proposalId: string,
+  /**
+   * The salesperson has seen that the document still carries
+   * `[To be confirmed]` and is sending anyway.
+   *
+   * Required rather than assumed: the Warn tier asked at generation time and
+   * never again, so without this a placeholder agreed to hours earlier reaches
+   * a client with nobody having looked at it since.
+   */
+  acknowledgePlaceholders = false,
+): Promise<SendResult> {
   const actor = await requireProfile();
   const db = await getServerClient();
 
@@ -39,6 +56,26 @@ export async function sendProposal(proposalId: string): Promise<SendResult> {
 
   const proposal = data as Proposal;
   assertSendable(proposal, actor);
+
+  // Last gate before the client. Refused rather than blocked — the caller can
+  // send again having acknowledged it.
+  const { data: sectionRows } = await db
+    .from("proposal_sections")
+    .select("*")
+    .eq("proposal_id", proposalId);
+
+  const placeholders = placeholderWarning(
+    (sectionRows ?? []) as ProposalSection[],
+  );
+
+  if (placeholders && !acknowledgePlaceholders) {
+    return {
+      ok: false,
+      reason: placeholders,
+      retryable: true,
+      needsPlaceholderAck: true,
+    };
+  }
 
   const recipient = proposal.client_email?.trim();
   if (!recipient) {

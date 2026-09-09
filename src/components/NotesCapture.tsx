@@ -3,11 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
-import { extractFromNotes } from "@/app/actions/extract";
+import { discardIfEmpty, extractFromNotes } from "@/app/actions/extract";
 import { MaterialList } from "@/components/MaterialList";
 import { MaterialUploader } from "@/components/MaterialUploader";
 import { Icon, Note, buttonClass, cn } from "@/components/ui/primitives";
 import { INTAKE_FIELD_LABELS, type SupportingMaterial } from "@/lib/db/types";
+import { useDraftGuard } from "@/lib/use-draft-guard";
 
 export function NotesCapture({
 	proposalId,
@@ -25,6 +26,20 @@ export function NotesCapture({
 	const [dropped, setDropped] = useState<
 		Array<{ field: string; reason: string }>
 	>([]);
+	const [kept, setKept] = useState<string | null>(null);
+
+	// Discarding is a deliberate exit, so the guard must be off while it runs —
+	// otherwise the click handler asks "are you sure you want to leave?" about a
+	// draft the salesperson has just chosen to throw away.
+	const [discarding, setDiscarding] = useState(false);
+
+	// The notes exist nowhere but this textarea until extraction runs.
+	useDraftGuard(
+		!discarding &&
+			notes.trim() !== initialNotes.trim() &&
+			notes.trim().length > 0,
+		"Your notes have not been read yet. Leaving now loses what you have typed.",
+	);
 
 	const usableMaterials = materials.filter((m) => m.summarized).length;
 	const canExtract = notes.trim().length > 40 || usableMaterials > 0;
@@ -43,6 +58,33 @@ export function NotesCapture({
 
 			if (result.dropped?.length) setDropped(result.dropped);
 			router.push(`/proposals/${proposalId}/confirm`);
+		});
+	}
+
+	/**
+	 * Backing out of a proposal that was started by mistake.
+	 *
+	 * The row was created the moment "New proposal" was clicked, because
+	 * uploads need something to attach to. Without this, the only way off this
+	 * screen is the nav, and the empty draft stays on the queue forever.
+	 */
+	function discard() {
+		setError(null);
+		setKept(null);
+		setDiscarding(true);
+
+		startTransition(async () => {
+			const result = await discardIfEmpty(proposalId);
+
+			if (result.discarded) {
+				router.push("/queue");
+				return;
+			}
+
+			// It had something on it after all. Say so rather than silently
+			// doing nothing, and put the guard back.
+			setDiscarding(false);
+			setKept(result.reason ?? "It was kept.");
 		});
 	}
 
@@ -104,6 +146,16 @@ export function NotesCapture({
 				</Note>
 			)}
 
+			{kept && (
+				<Note tone="neutral" title="This draft was kept">
+					{kept}
+					<p className="mt-2 text-ink-muted">
+						Nothing you have typed or uploaded is ever thrown away
+						automatically. You can carry on from here.
+					</p>
+				</Note>
+			)}
+
 			{dropped.length > 0 && (
 				<Note tone="warning" title="Some proposed values were discarded">
 					<ul className="mt-1 space-y-0.5">
@@ -156,6 +208,19 @@ export function NotesCapture({
 						Add some notes or upload a file first.
 					</p>
 				)}
+
+				{/*
+          Pushed to the far end: backing out is a real need, but it is not
+          what this screen is for.
+        */}
+				<button
+					type="button"
+					onClick={discard}
+					disabled={pending}
+					className={cn(buttonClass("ghost"), "ms-auto")}
+				>
+					Discard this draft
+				</button>
 			</div>
 		</div>
 	);

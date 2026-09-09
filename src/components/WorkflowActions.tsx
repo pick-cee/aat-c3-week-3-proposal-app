@@ -16,10 +16,13 @@ export function WorkflowActions({
   proposal,
   blockingReason,
   staleCount,
+  successor,
 }: {
   proposal: Proposal;
   blockingReason: string | null;
   staleCount: number;
+  /** The version already forked from this one, if there is one. */
+  successor: Pick<Proposal, "id" | "version" | "status"> | null;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +50,46 @@ export function WorkflowActions({
   }
 
   if (proposal.status === "approved" || proposal.status === "sent") {
+    /*
+      This version has already been continued.
+
+      The fork button must not appear here. Pressing it made a SECOND version
+      numbered N+1 — two rows both claiming to continue this one — because
+      nothing on this page said the work had already moved on. The mistake is
+      easy to make and invisible afterwards: the salesperson opens v1, which is
+      still on the queue and is the version they know, and presses the button
+      expecting v3.
+
+      So the control becomes a way to reach the work instead of a way to
+      duplicate it.
+    */
+    if (successor) {
+      return (
+        <Panel
+          tone="neutral"
+          icon="lock"
+          title={`Version ${proposal.version} is frozen`}
+          action={
+            <a
+              href={`/proposals/${successor.id}`}
+              className={buttonClass("secondary")}
+            >
+              Go to version {successor.version}
+            </a>
+          }
+        >
+          It stays exactly as approved, permanently.{" "}
+          <span className="text-ink">
+            This version has already been continued as version{" "}
+            {successor.version}
+          </span>
+          , which is where the current work lives — so there is nothing to edit
+          here. To make version {successor.version + 1}, open version{" "}
+          {successor.version} and edit it from there.
+        </Panel>
+      );
+    }
+
     return (
       <Panel
         tone="neutral"

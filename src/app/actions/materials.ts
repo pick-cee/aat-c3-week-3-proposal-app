@@ -7,7 +7,11 @@ import { requireProfile } from "@/lib/auth";
 import { ModelCallError } from "@/lib/anthropic";
 import { MAX_MATERIALS_SUMMARIZED } from "@/lib/constants";
 import { getServerClient } from "@/lib/db/server";
-import type { Proposal, SupportingMaterial } from "@/lib/db/types";
+import type {
+  Proposal,
+  ProposalSection,
+  SupportingMaterial,
+} from "@/lib/db/types";
 import { RuleViolation } from "@/lib/errors";
 import {
   assertAuthor,
@@ -17,6 +21,7 @@ import {
 import { extractFile } from "@/lib/materials/extract";
 import { classifyFile, unsupportedReason } from "@/lib/materials/formats";
 import { summarizeMaterial } from "@/lib/materials/summarize";
+import { mergeStaleReasons } from "@/lib/policy/staleness";
 import { checkRateLimit, rateLimitMessage } from "@/lib/rate-limit";
 
 export interface UploadSlot {
@@ -184,7 +189,65 @@ export async function processMaterial(materialId: string): Promise<void> {
   }
 
   await summarizeIfUnderCap(material, extraction, bytes, actor.full_name);
+
+  // Anything already written was written without this file in front of the
+  // model.
+  await markSectionsStaleForMaterial(material, actor.full_name);
+
   revalidatePath(`/proposals/${material.proposal_id}`);
+}
+
+/**
+ * A document arriving after the writing makes what was written stale.
+ *
+ * The sequence is ordinary: generate the proposal, then the client emails the
+ * requirements doc they promised on the call. Every section on screen was
+ * written without it, and nothing about the page says so — the prose still
+ * reads well, which is exactly what makes this the quiet failure. The
+ * salesperson sends a proposal that ignores the document the client just sent.
+ *
+ * Marked here rather than at upload, because a file that turned out to be
+ * unreadable informs nothing and flagging it would be a false alarm. Sections
+ * with no content yet are skipped: they will be written with this file
+ * included.
+ */
+async function markSectionsStaleForMaterial(
+  material: SupportingMaterial,
+  actorName: string,
+): Promise<void> {
+  const db = await getServerClient();
+
+  const { data } = await db
+    .from("proposal_sections")
+    .select("*")
+    .eq("proposal_id", material.proposal_id)
+    .eq("source", "generated")
+    .order("position", { ascending: true });
+
+  const sections = (data ?? []) as ProposalSection[];
+  const written = sections.filter((s) => s.content);
+  if (written.length === 0) return;
+
+  const reason = { kind: "material" as const, filename: material.filename };
+
+  for (const section of written) {
+    await db
+      .from("proposal_sections")
+      .update({
+        stale_fields: mergeStaleReasons(section.stale_fields ?? [], [reason]),
+      })
+      .eq("id", section.id);
+  }
+
+  await logActivity({
+    proposalId: material.proposal_id,
+    actorName,
+    event: "sections_marked_stale",
+    detail:
+      `${material.filename} was uploaded after ${written.length} section` +
+      `${written.length === 1 ? " was" : "s were"} written. ` +
+      `Regenerating will take it into account.`,
+  });
 }
 
 /**

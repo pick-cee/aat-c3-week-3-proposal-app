@@ -87,6 +87,23 @@ export interface SectionPromptInput {
   precedingSections: Array<{ title: string; content: string }>;
   /** Set on a retry after a rejection, so the second attempt knows what failed. */
   rejectionFeedback?: string;
+  /**
+   * What the salesperson asked for, in their own words.
+   *
+   * A regeneration without this is a re-roll: the model rewrites from the same
+   * inputs and may land anywhere, including somewhere worse. The person
+   * clicking the button almost always knows what they want changed, and the
+   * only reason they could not say so was that nothing asked them.
+   */
+  userInstruction?: string;
+  /**
+   * The text being replaced.
+   *
+   * Sent only alongside an instruction, because an instruction like "make the
+   * second paragraph shorter" or "drop the line about onboarding" is
+   * meaningless without the thing it refers to.
+   */
+  currentContent?: string;
 }
 
 export function buildSectionPrompt(input: SectionPromptInput): string {
@@ -151,6 +168,32 @@ export function buildSectionPrompt(input: SectionPromptInput): string {
   parts.push("\n# Your task\n");
   parts.push(brief.instruction);
   parts.push(`\nAim for roughly ${brief.target} words.`);
+
+  // The salesperson's own instruction, last and closest to the task.
+  //
+  // Placed after the brief because it is the more specific of the two: the
+  // brief says what the section is for in general, this says what THIS
+  // rewrite is for. Where they conflict, the person asking wins — they are
+  // looking at the draft and the brief is not.
+  if (input.userInstruction) {
+    if (input.currentContent) {
+      parts.push(
+        "\n# The current text you are replacing\n",
+        input.currentContent,
+      );
+    }
+
+    parts.push(
+      "\n# What the salesperson has asked you to change\n",
+      input.userInstruction,
+      "\nThis is the specific reason you are rewriting. Do what they " +
+        "asked, and change nothing else that was already working — a rewrite " +
+        "that fixes the requested thing and quietly rephrases three others is " +
+        "worse than the original, because now everything needs re-reading.",
+      "\nThe rules above still hold. If they ask for a figure or a date " +
+        "that is not in the notes, write around it rather than inventing one.",
+    );
+  }
 
   if (input.rejectionFeedback) {
     // The retry has to know what went wrong, or it is just a second roll of the

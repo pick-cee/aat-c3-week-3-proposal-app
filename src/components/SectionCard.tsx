@@ -17,6 +17,21 @@ import { MAX_REGENERATIONS_PER_SECTION } from "@/lib/constants";
 import { INTAKE_FIELD_LABELS, type ProposalSection } from "@/lib/db/types";
 import { stalenessMessage } from "@/lib/policy/staleness";
 import { sectionDefinition } from "@/lib/sections";
+import { useDraftGuard } from "@/lib/use-draft-guard";
+
+/**
+ * The things people ask for most often.
+ *
+ * Presets rather than a blank box alone: most rewrite requests are one of a
+ * handful of shapes, and offering them turns the common case into one click
+ * while leaving the box free for anything else.
+ */
+const QUICK_ASKS = [
+  "Make it shorter",
+  "More specific to their situation",
+  "Less salesy",
+  "Use the attached documents more",
+];
 import { formatDateTime, formatNumber } from "@/lib/format";
 
 /**
@@ -53,9 +68,17 @@ export function SectionCard({
   const [message, setMessage] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [instruction, setInstruction] = useState("");
   const [draft, setDraft] = useState(section.content ?? "");
   const [warnings, setWarnings] = useState<SectionWarning[]>(liveWarnings ?? []);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // An open editor with changed text is unsaved work too.
+  useDraftGuard(
+    editing && draft.trim() !== (section.content ?? "").trim(),
+    "You have unsaved changes to this section. Leaving now discards them.",
+  );
 
   const definition = sectionDefinition(section.section_key);
   const isTemplate = section.source === "template";
@@ -78,16 +101,24 @@ export function SectionCard({
     if (!editing) setDraft(content ?? "");
   }, [content, editing]);
 
-  function handleRegenerate() {
+  function handleRegenerate(withInstruction?: string) {
     setMessage(null);
     setFailed(false);
+    setAsking(false);
 
     startTransition(async () => {
-      const result = await regenerateSection(proposalId, section.section_key);
+      const result = await regenerateSection(
+        proposalId,
+        section.section_key,
+        withInstruction,
+      );
       setFailed(!result.ok);
       setMessage(result.message ?? null);
       setWarnings(result.warnings ?? []);
-      if (result.content) setDraft(result.content);
+      if (result.content) {
+        setDraft(result.content);
+        setInstruction("");
+      }
     });
   }
 
@@ -229,7 +260,7 @@ export function SectionCard({
 
               <button
                 type="button"
-                onClick={handleRegenerate}
+                onClick={() => setAsking((v) => !v)}
                 disabled={isWriting || remaining <= 0}
                 className={cn(
                   buttonClass("secondary", "sm"),
@@ -267,6 +298,84 @@ export function SectionCard({
         it concerns. Previously this was one banner covering the whole proposal,
         which made the salesperson re-read the document to find what was meant.
       */}
+      {/*
+        Say what you want changed, rather than re-rolling and hoping.
+        A bare regeneration rewrites from identical inputs and can land
+        anywhere, including worse than the draft it replaced. The person
+        clicking the button usually knows what they want different — nothing
+        was asking them.
+      */}
+      {asking && (
+        <div className="border-b border-accent/20 bg-accent/[0.03] px-4 py-3 animate-fade">
+          <label
+            htmlFor={`ask-${section.section_key}`}
+            className="text-2xs font-semibold uppercase tracking-wide text-ink-muted"
+          >
+            What should change?
+          </label>
+
+          <textarea
+            id={`ask-${section.section_key}`}
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            rows={2}
+            autoFocus
+            placeholder="e.g. Mention the Sage integration explicitly, and cut the last paragraph."
+            onKeyDown={(e) => {
+              // Enter sends; Shift+Enter is a newline. A two-line instruction
+              // should not need a trip to the mouse.
+              if (e.key === "Enter" && !e.shiftKey && instruction.trim()) {
+                e.preventDefault();
+                handleRegenerate(instruction.trim());
+              }
+            }}
+            className="mt-1.5 block w-full rounded border border-line-strong bg-surface px-3 py-2 text-sm text-ink shadow-sm transition-colors placeholder:text-ink-subtle focus:border-accent/40 focus:outline-none focus:ring-2 focus:ring-accent/10"
+          />
+
+          {/* The handful of things people ask for most, so the common case is
+              one click rather than a sentence. */}
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {QUICK_ASKS.map((ask) => (
+              <button
+                key={ask}
+                type="button"
+                onClick={() => setInstruction(ask)}
+                className="rounded-full border border-line px-2.5 py-1 text-2xs text-ink-muted transition-colors hover:border-line-strong hover:bg-surface-sunken hover:text-ink"
+              >
+                {ask}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={isWriting}
+              onClick={() => handleRegenerate(instruction.trim() || undefined)}
+              className={buttonClass("primary", "sm")}
+            >
+              <Icon
+                name="refresh"
+                className={cn("h-3.5 w-3.5", isWriting && "animate-spin")}
+              />
+              {instruction.trim() ? "Rewrite with this" : "Rewrite anyway"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAsking(false)}
+              className={buttonClass("secondary", "sm")}
+            >
+              Cancel
+            </button>
+            <p className="text-2xs text-ink-subtle">
+              {remaining} rewrite{remaining === 1 ? "" : "s"} left on this
+              section
+            </p>
+          </div>
+        </div>
+      )}
+
+
       {approverNote && (
         <div className="border-b border-state-changes/30 bg-state-changes-fill/40 px-4 py-3">
           <p className="text-2xs font-semibold uppercase tracking-wide text-[hsl(21_90%_35%)]">

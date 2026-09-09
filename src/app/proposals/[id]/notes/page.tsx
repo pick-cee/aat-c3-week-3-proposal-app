@@ -26,11 +26,12 @@ export default async function NotesPage({
 
 	if (proposal.author_id !== actor.id) notFound();
 
+	// Newest first: the file just uploaded is the one being looked for.
 	const { data: materialRows } = await db
 		.from("supporting_materials")
 		.select("*")
 		.eq("proposal_id", id)
-		.order("created_at", { ascending: true });
+		.order("created_at", { ascending: false });
 
 	return (
 		<AppShell actor={actor} backTo="/queue">

@@ -47,6 +47,10 @@ export interface GenerateSectionInput {
   intake: Partial<IntakeFields>;
   materialSummaries: Array<{ filename: string; summary: string }>;
   precedingSections: Array<{ title: string; content: string }>;
+  /** What the salesperson asked for, on a targeted rewrite. */
+  userInstruction?: string;
+  /** The text being replaced, so an instruction about it makes sense. */
+  currentContent?: string;
 }
 
 export async function generateSection(

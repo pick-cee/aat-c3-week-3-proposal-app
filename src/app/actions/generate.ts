@@ -144,6 +144,16 @@ export async function recordGenerationGaps(proposalId: string): Promise<void> {
 export async function regenerateSection(
   proposalId: string,
   sectionKey: SectionKey,
+  /**
+   * What the salesperson wants changed, in their own words.
+   *
+   * Optional: a bare regeneration is still a re-roll, and sometimes that is
+   * genuinely what someone wants. But the person clicking the button usually
+   * knows what they want different, and before this there was nowhere to say
+   * it — so the model rewrote from identical inputs and could land anywhere,
+   * including somewhere worse than the draft it replaced.
+   */
+  instruction?: string,
 ): Promise<SectionOutcome> {
   const { actor, proposal } = await loadForGeneration(proposalId);
 
@@ -160,7 +170,13 @@ export async function regenerateSection(
     return { ok: false, message: readiness.reason! };
   }
 
-  const outcome = await runSectionGeneration(proposal, sectionKey, actor, true);
+  const outcome = await runSectionGeneration(
+    proposal,
+    sectionKey,
+    actor,
+    true,
+    instruction?.trim() || undefined,
+  );
 
   if (outcome.ok) {
     await markFollowingSectionsStale(proposalId, sectionKey, actor);
@@ -235,6 +251,7 @@ async function runSectionGeneration(
   sectionKey: SectionKey,
   actor: Profile,
   isRegeneration: boolean,
+  userInstruction?: string,
 ): Promise<SectionOutcome> {
   const db = await getServerClient();
 
@@ -295,6 +312,11 @@ async function runSectionGeneration(
     intake: proposal,
     materialSummaries: materials.summaries,
     precedingSections: preceding,
+    userInstruction,
+    // Only alongside an instruction: "shorten the second paragraph" needs the
+    // paragraph, and sending the old text on a fresh generation would invite
+    // the model to copy it.
+    currentContent: userInstruction ? (section.content ?? undefined) : undefined,
   });
 
   // Every attempt is logged, including the discarded ones. They cost money and
@@ -349,6 +371,9 @@ async function runSectionGeneration(
     event: isRegeneration ? "regenerated" : "generated",
     detail:
       `${section.title}` +
+      // What was asked for, so a later reader can tell a targeted rewrite from
+      // a blind re-roll — and see whether the request was actually met.
+      (userInstruction ? ` — asked: "${userInstruction}"` : "") +
       (outcome.warnings.length > 0
         ? ` — ${outcome.warnings.length} name warning(s) to check`
         : ""),
