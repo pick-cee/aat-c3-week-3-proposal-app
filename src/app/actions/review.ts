@@ -20,7 +20,7 @@ import {
   assertForkable,
 } from "@/lib/guards";
 import { assessReadiness } from "@/lib/policy/fields";
-import { notifyApprovers } from "@/lib/email/notify";
+import { notifyApprovers, notifyAuthorOfDecision } from "@/lib/email/notify";
 import { placeholderWarning } from "@/lib/policy/placeholders";
 import { GENERATED_SECTIONS } from "@/lib/sections";
 
@@ -98,6 +98,11 @@ export async function submitForReview(proposalId: string): Promise<void> {
       .join(" "),
   });
 
+  // Before the redirect, which throws. Awaited rather than fired and forgotten
+  // so a serverless function is not torn down mid-send; `notify` swallows its
+  // own failures, so this cannot fail the submission.
+  await notifyApprovers(proposal, actor.full_name);
+
   revalidatePath(`/proposals/${proposalId}`);
   redirect("/queue");
 }
@@ -146,6 +151,16 @@ export async function approveProposal(
       ? `Approved: ${note.trim()}`
       : "Approved with no note.",
   });
+
+  // The salesperson is the one who has to act on this — sending belongs to
+  // them by design, so an approved proposal waits for a step they may not know
+  // is theirs. Before the redirect, which throws.
+  await notifyAuthorOfDecision(
+    proposal,
+    "approved",
+    actor.full_name,
+    note?.trim() || null,
+  );
 
   revalidatePath(`/proposals/${proposalId}`);
   redirect("/queue");
@@ -252,6 +267,17 @@ export async function requestChanges(
           (trimmedOverall ? `. ${trimmedOverall}` : ".")
         : trimmedOverall,
   });
+
+  // Being blocked without knowing it is the worst seat in this workflow: the
+  // proposal sits in `changes_requested` displaying notes nobody has read.
+  // Before the redirect, which throws.
+  await notifyAuthorOfDecision(
+    proposal,
+    "changes_requested",
+    actor.full_name,
+    trimmedOverall || null,
+    comments.length,
+  );
 
   revalidatePath(`/proposals/${proposalId}`);
   redirect("/queue");
