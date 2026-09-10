@@ -1039,7 +1039,7 @@ Two things about how it is built matter more than the screen itself:
   before sending would show them a 404. That restriction is right and stays; the
   preview needs a different door, scoped to the proposal's own people.
 
-### Submitting for review tells the approver
+### Every handoff sends a notification
 
 Submission sets a status and redirects. Without a notification, the approver
 finds out by happening to open the queue — and `STALE_IN_REVIEW_HOURS` only
@@ -1048,8 +1048,21 @@ not looking at it. Meanwhile the salesperson is blocked and does not know why.
 The separation of duties is the point of this system; a handoff that depends on
 someone refreshing a page is not a handoff.
 
-So submission emails every approver a link to the review screen. Three
-constraints:
+The workflow passes work between two people three times, and every one of those
+passes was silent. Each direction now sends mail:
+
+| Transition | Who is told | Because |
+| ---------- | ----------- | ------- |
+| `draft` → `in_review` | Every approver except the author | They hold the work now, and nothing else tells them. |
+| `in_review` → `approved` | The author | **Sending belongs to them**, so an approved proposal waits on a step the approver cannot take. |
+| `in_review` → `changes_requested` | The author | They are blocked, and the notes sit unread until they happen to look. |
+
+The approved mail says explicitly that nothing reaches the client until the
+salesperson sends it — otherwise "approved" reads as "done" and the proposal
+stalls one step from delivery. The rejection mail says that editing returns it
+to `draft`, so nobody goes looking for a button that reopens it.
+
+Three constraints hold for all of them:
 
 - **The author is skipped**, even if they hold the approver role. They cannot
   approve their own work, so telling them it is waiting for them would be worse
@@ -1057,9 +1070,15 @@ constraints:
 - **It goes through the same demo redirect as client mail.** A demo application
   must not be able to email a stranger, and an approver address in a seeded
   database is exactly the kind of address that could belong to someone real.
-- **Failure is non-fatal.** The submission has already happened and is correct
+- **Failure is non-fatal.** The transition has already happened and is correct
   in the database; an email provider being down must not roll it back or show
-  the salesperson an error about work that succeeded.
+  someone an error about work that succeeded. `notify` catches and logs its own
+  failures rather than throwing.
+
+Each send is **awaited before the action's `redirect()`**, which is not a
+stylistic choice: `redirect` throws by design, so a notification fired after it
+never runs, and one merely started but not awaited can be cut off when the
+serverless function is torn down.
 
 ### Nothing typed is lost to a stray click
 
