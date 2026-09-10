@@ -57,6 +57,40 @@ export async function sendProposal(
   const proposal = data as Proposal;
   assertSendable(proposal, actor);
 
+  /*
+    A superseded version must not be sent.
+
+    `assertSendable` asks whether this row is approved and whether this person
+    wrote it. Both can be true of a version that has since been continued: v3
+    was approved, then forked to v4, and v3 stays `approved` forever because
+    that is the entire point of freezing it.
+
+    Sending it would deliver the superseded document while the real work sits
+    in v4 — and because the share token resolves to the most recent *sent*
+    version, it would also drag every client who already has the link back to
+    the older text. That is the one thing the token design exists to prevent.
+
+    Checked here rather than in `assertSendable` because it needs the database;
+    the guard is pure. This is the enforcement, not the button.
+  */
+  const { data: successor } = await db
+    .from("proposals")
+    .select("id, version")
+    .eq("parent_id", proposalId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (successor) {
+    throw new RuleViolation(
+      `Version ${proposal.version} has been continued as version ` +
+      `${successor.version}, so it is out of date. Send version ` +
+      `${successor.version} instead — sending this one would give the client ` +
+      "the older document.",
+      "superseded",
+    );
+  }
+
   // Last gate before the client. Refused rather than blocked — the caller can
   // send again having acknowledged it.
   const { data: sectionRows } = await db

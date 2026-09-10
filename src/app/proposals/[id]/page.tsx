@@ -244,6 +244,10 @@ export default async function ProposalEditorPage({
               // `get_shared_proposal`, which returns only versions that have
               // actually been delivered, so before sending it would 404.
               previewUrl={`/proposals/${id}/preview`}
+              // An approved version that has been forked is out of date. It
+              // keeps its delivery history — that happened — but it must not
+              // offer to send again.
+              successor={successor}
             />
           </div>
         )}

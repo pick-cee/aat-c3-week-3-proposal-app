@@ -26,12 +26,21 @@ export function SendPanel({
   demoMode,
   deliveries,
   previewUrl,
+  successor,
 }: {
   proposalId: string;
   intendedRecipient: string | null;
   actualRecipient: string;
   demoMode: boolean;
   deliveries: Delivery[];
+  /**
+   * The version that continued this one, if there is one.
+   *
+   * An approved version stays `approved` forever once forked — that is what
+   * freezing means — so status alone cannot tell this panel that the document
+   * it is offering to send has been superseded.
+   */
+  successor: { id: string; version: number } | null;
   /**
    * The client-facing page, exactly as it will look in their browser.
    *
@@ -83,6 +92,61 @@ export function SendPanel({
                 )}
             </p>
             {deliveries.length > 1 && <History deliveries={deliveries} />}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /*
+    This version has been continued, so it is out of date and must not be sent.
+
+    Status cannot express this on its own: an approved version stays `approved`
+    permanently once forked — that is what freezing means — so without the
+    successor this panel offered a live "Send proposal" button on a superseded
+    document. Pressing it would have delivered the older text, and because the
+    share token resolves to the most recent *sent* version, it would also have
+    pulled every client already holding the link back to it.
+
+    Nothing is offered here rather than a disabled button: there is no state in
+    which sending this version becomes correct again, and a disabled control
+    invites someone to hunt for the condition that re-enables it.
+  */
+  if (successor) {
+    return (
+      <div className="rounded-lg border border-line bg-surface-sunken/60 p-5">
+        <div className="flex gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface text-ink-subtle">
+            <Icon name="lock" className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-medium text-ink">Out of date — not sendable</p>
+            <p className="mt-1 text-sm text-ink-muted">
+              This version was continued as{" "}
+              <span className="font-medium text-ink">
+                version {successor.version}
+              </span>
+              , so it is no longer the current proposal. Sending it would give
+              the client the older document.
+            </p>
+
+            <a
+              href={`/proposals/${successor.id}`}
+              className={cn(
+                "mt-4",
+                buttonClass("secondary"),
+                // Same reasoning as the preview button below: `secondary` is
+                // white on a near-white panel, whose border measures 1.48:1
+                // against it — under the 3:1 WCAG 1.4.11 asks of a component
+                // boundary. `ink-subtle` clears it at 5.25:1.
+                "border-ink-subtle hover:border-ink-subtle bg-surface hover:bg-surface/60",
+              )}
+            >
+              <Icon name="send" className="h-4 w-4" />
+              Go to version {successor.version} to send
+            </a>
+
+            {hasAttempted && <History deliveries={deliveries} />}
           </div>
         </div>
       </div>

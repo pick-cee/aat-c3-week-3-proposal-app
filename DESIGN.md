@@ -62,7 +62,9 @@ the proposal is in.
    ends at the decision; letting them also deliver hands one person the whole
    chain and undoes rule 3. Sending is idempotent, enforced by a partial unique
    index rather than by an application-level check — a read-then-insert loses a
-   double-click.
+   double-click. `approved` is necessary but **not sufficient**: a version that
+   has been forked stays `approved` forever and must not be sent — see "A
+   superseded version cannot be sent" below.
 6. **`changes_requested` is a resting state, not a transition.** A rejected
    proposal sits there displaying the approver's note, and returns to `draft` on
    the salesperson's first edit. The queue must be able to tell a proposal that
@@ -163,6 +165,35 @@ and either way the salesperson lands on the version they should be editing.
 
 Enforced server-side in `forkProposal`, not only in the panel — the panel is
 what makes the rule visible, not what makes it true.
+
+### A superseded version cannot be sent
+
+Rule 5 says only an `approved` proposal can be sent. That is necessary and not
+sufficient, because **a version stays `approved` permanently once it is forked**
+— freezing is the entire point of it. So `assertSendable` passes on v3 long
+after v4 became the real work, and the send panel offered a live Send button on
+a document nobody intends the client to see.
+
+Sending it would be worse than showing stale text to one person. The share token
+resolves to the most recent *sent* version, so delivering a superseded version
+would drag **every client already holding the link** back to the older document
+— the precise failure the token design exists to prevent, triggered from the
+wrong end.
+
+**A version with a child is not sendable.** The check is a successor lookup in
+`sendProposal`, not in `assertSendable`, because it needs the database and the
+guard is pure. It throws `superseded`, naming the version that should be sent
+instead.
+
+The panel shows no send control for such a version — not a disabled one. There
+is no state in which sending it becomes correct again, and a disabled button
+invites someone to hunt for the condition that re-enables it. It offers a link
+to the current version instead.
+
+**Delivery history survives.** A superseded version that was genuinely sent when
+it was current still shows its "Delivered to the client" record: that happened,
+and `deliveries` rows are permanent. Only the *unsent* superseded case shows the
+out-of-date panel — the already-delivered branch is checked first.
 
 ---
 
@@ -1142,6 +1173,9 @@ Every failure gets a state, a written reason and a place in `activity_log`.
 - **A proposal reaches the send screen still carrying `[To be confirmed]`** —
   the send is interrupted once with the placeholder quoted, and proceeds only on
   a second, explicit confirmation. See section 9.
+- **A superseded version is sent** — refused with `superseded`, naming the
+  version to send instead. The panel offers no send control on such a version at
+  all. See section 2.
 - **Send fails** — see the dedicated section below. This is the most serious
   state in the system and gets its own treatment.
 - **A proposal sits in review past `STALE_IN_REVIEW_HOURS`** — surfaced on the
