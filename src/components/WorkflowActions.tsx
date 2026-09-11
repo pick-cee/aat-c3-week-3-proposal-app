@@ -151,7 +151,6 @@ export function WorkflowActions({
           </span>
         </span>
       )}
-
       {/*
         Deleting is destructive and unrecoverable, so it is deliberately not a
         peer of "Submit" — it sits below a divider, in quiet type, and asks
@@ -187,8 +186,9 @@ export function WorkflowActions({
             type="button"
             disabled={pending}
             onClick={() => setConfirmingDelete(true)}
-            className="text-xs font-medium text-ink-muted underline-offset-2 hover:text-state-failed hover:underline"
+            className={buttonClass("danger", "sm")}
           >
+            <Icon name="trash" className="h-3.5 w-3.5" />
             Delete this draft
           </button>
         )}

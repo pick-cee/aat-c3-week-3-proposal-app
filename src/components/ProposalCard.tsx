@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { DeleteDraftButton } from "@/components/DeleteDraftButton";
 import { StatusPill } from "@/components/StatusPill";
 import { Icon, Meter, cn } from "@/components/ui/primitives";
 import type { Profile } from "@/lib/db/types";
@@ -24,7 +25,23 @@ export function ProposalCard({
 			? `/proposals/${proposal.id}/review`
 			: `/proposals/${proposal.id}`;
 
+	// Only the author's own unsubmitted work can be deleted, matching what
+	// `deleteDraft` enforces server-side. Offering the control anywhere else
+	// would be offering an action that is about to be refused.
+	const canDelete =
+		proposal.author_id === actor.id &&
+		(proposal.status === "draft" || proposal.status === "changes_requested");
+
 	return (
+		// The delete control sits OUTSIDE the link: a <button> inside an <a> is
+		// invalid HTML, and a click on it would navigate rather than delete.
+		<div className="relative">
+		{canDelete && (
+			<DeleteDraftButton
+				proposalId={proposal.id}
+				label={proposal.company_name ?? "this untitled draft"}
+			/>
+		)}
 		<Link
 			href={href}
 			className={cn(
@@ -65,7 +82,10 @@ export function ProposalCard({
 					</p>
 				</div>
 
-				<StatusPill status={displayStatus} size="sm" />
+				{/* Shifted left so the trash icon does not sit on top of it. */}
+				<div className={cn("shrink-0", canDelete && "me-9")}>
+					<StatusPill status={displayStatus} size="sm" />
+				</div>
 			</div>
 
 			<div className="mt-3.5 flex items-center gap-3 pl-1.5">
@@ -109,5 +129,6 @@ export function ProposalCard({
 				</p>
 			)}
 		</Link>
+		</div>
 	);
 }
