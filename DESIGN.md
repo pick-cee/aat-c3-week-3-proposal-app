@@ -166,6 +166,33 @@ and either way the salesperson lands on the version they should be editing.
 Enforced server-side in `forkProposal`, not only in the panel — the panel is
 what makes the rule visible, not what makes it true.
 
+### Only a draft can be deleted
+
+A proposal that has been submitted is no longer only its author's. An approver
+has read it, or a client has been sent it, and deleting it would erase their
+side of that record too. So `deleteDraft` accepts `draft` and
+`changes_requested` — both states where the work is back with the salesperson
+and nobody else is waiting on it — and refuses everything else. Rule 3 says
+content is editable only in `draft`; deletion is the strongest edit there is.
+
+Two further refusals, both about not breaking something else:
+
+- **A version with a child cannot be deleted.** v2 was built from it, and
+  removing the parent would break the chain the same way a second fork does.
+  Delete the child first.
+- **Storage bytes are reference-counted**, exactly as `deleteMaterial` does it.
+  A fork re-links materials rather than copying them, so several versions can
+  point at one object; removing every file this draft references would silently
+  gut an approved — possibly already sent — sibling, and nothing would report it
+  until someone opened that version and found the document missing. The
+  `supporting_materials` rows go either way, since they cascade. Only the bytes
+  need the check.
+
+`approvals` rows are deleted explicitly first, because they reference
+`proposals` **without** cascade — deliberately, as permanent records. A
+`changes_requested` draft has one, so without this the delete would be refused
+by the foreign key. Nothing is lost that outlives the proposal it describes.
+
 ### A superseded version cannot be sent
 
 Rule 5 says only an `approved` proposal can be sent. That is necessary and not
@@ -981,10 +1008,19 @@ the form myself" path, because a salesperson with a clean brief should not be
 walked through a stage they do not need. Also a **discard** control: the
 proposal row is created the moment "New proposal" is clicked, because uploads
 need something to attach to, so without a way out every abandoned start leaves
-an "Untitled proposal" on the queue. Discard deletes the row only if it is
-genuinely empty — no notes, no intake values, no files — and otherwise says why
-it was kept. A tidy queue is worth far less than never destroying someone's
-work.
+an "Untitled proposal" on the queue.
+
+Discard takes one of two paths depending on whether anything is here yet. An
+untouched row is removed with no ceremony — there is nothing to lose and a
+confirmation would be noise. A row with notes or files **asks first, then
+deletes for real**, naming how many files go with it.
+
+The second path is the correction to an earlier design. Discard originally
+called `discardIfEmpty` unconditionally, which refuses once there is content and
+reported that the draft had been kept. That is honest but wrong: the salesperson
+pressed a button labelled Discard and the draft was still on the queue. A
+control that declines to do the thing it is named after reads as broken, and
+teaches people the button does not work rather than teaching them the rule.
 
 **Confirm** — the intake form, pre-filled from extraction. Each populated field
 carries the source phrase beneath it in quiet type, so the eye lands on the

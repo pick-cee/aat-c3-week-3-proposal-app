@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 
+import { deleteDraft } from "@/app/actions/proposals";
 import { forkProposal, submitForReview } from "@/app/actions/review";
 import { Icon, Note, buttonClass, cn } from "@/components/ui/primitives";
 import type { Proposal } from "@/lib/db/types";
@@ -26,6 +27,7 @@ export function WorkflowActions({
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   function act(fn: () => Promise<void>) {
     setError(null);
@@ -149,6 +151,48 @@ export function WorkflowActions({
           </span>
         </span>
       )}
+
+      {/*
+        Deleting is destructive and unrecoverable, so it is deliberately not a
+        peer of "Submit" — it sits below a divider, in quiet type, and asks
+        first. A `window.confirm` would be easier and worse: it is the same
+        dialogue people dismiss reflexively all day, and it cannot name what is
+        about to be lost.
+      */}
+      <span className="mt-4 block border-t border-line pt-3">
+        {confirmingDelete ? (
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-ink">
+              Delete this draft and everything on it? This cannot be undone.
+            </span>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => act(() => deleteDraft(proposal.id))}
+              className={buttonClass("danger", "sm")}
+            >
+              {pending ? "Deleting…" : "Yes, delete it"}
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => setConfirmingDelete(false)}
+              className={buttonClass("secondary", "sm")}
+            >
+              Keep it
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => setConfirmingDelete(true)}
+            className="text-xs font-medium text-ink-muted underline-offset-2 hover:text-state-failed hover:underline"
+          >
+            Delete this draft
+          </button>
+        )}
+      </span>
     </Panel>
   );
 }

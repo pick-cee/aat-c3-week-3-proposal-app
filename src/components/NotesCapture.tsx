@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { discardIfEmpty, extractFromNotes } from "@/app/actions/extract";
+import { deleteDraft } from "@/app/actions/proposals";
 import { MaterialList } from "@/components/MaterialList";
 import { MaterialUploader } from "@/components/MaterialUploader";
 import { Icon, Note, buttonClass, cn } from "@/components/ui/primitives";
@@ -32,6 +33,7 @@ export function NotesCapture({
 	// otherwise the click handler asks "are you sure you want to leave?" about a
 	// draft the salesperson has just chosen to throw away.
 	const [discarding, setDiscarding] = useState(false);
+	const [confirmingDiscard, setConfirmingDiscard] = useState(false);
 
 	// The notes exist nowhere but this textarea until extraction runs.
 	useDraftGuard(
@@ -67,24 +69,58 @@ export function NotesCapture({
 	 * The row was created the moment "New proposal" was clicked, because
 	 * uploads need something to attach to. Without this, the only way off this
 	 * screen is the nav, and the empty draft stays on the queue forever.
+	 *
+	 * Two paths, because "discard" means different things depending on whether
+	 * anything is here yet:
+	 *
+	 *   Nothing typed — `discardIfEmpty` removes the row with no ceremony. There
+	 *   is nothing to lose and a confirmation would be noise.
+	 *
+	 *   Something typed — asking first, then deleting for real. This previously
+	 *   called `discardIfEmpty` unconditionally, which REFUSES once there is
+	 *   content and reported that it had been kept. Technically honest, but the
+	 *   salesperson pressed a button labelled Discard and the draft was still
+	 *   there: a control that declines to do the thing it is named after reads
+	 *   as broken.
 	 */
 	function discard() {
 		setError(null);
 		setKept(null);
+
+		// Anything worth confirming about? Uploaded files count: they are work.
+		const hasWork = notes.trim().length > 0 || materials.length > 0;
+
+		if (hasWork && !confirmingDiscard) {
+			setConfirmingDiscard(true);
+			return;
+		}
+
 		setDiscarding(true);
 
 		startTransition(async () => {
-			const result = await discardIfEmpty(proposalId);
+			try {
+				if (hasWork) {
+					// Deliberate and destructive — the user has just confirmed it.
+					await deleteDraft(proposalId);
+					return; // deleteDraft redirects
+				}
 
-			if (result.discarded) {
-				router.push("/queue");
-				return;
+				const result = await discardIfEmpty(proposalId);
+				if (result.discarded) {
+					router.push("/queue");
+					return;
+				}
+
+				setDiscarding(false);
+				setConfirmingDiscard(false);
+				setKept(result.reason ?? "It was kept.");
+			} catch (e) {
+				// A redirect throws by design; anything else is a real failure.
+				if (e instanceof Error && e.message.includes("NEXT_REDIRECT")) throw e;
+				setDiscarding(false);
+				setConfirmingDiscard(false);
+				setError(e instanceof Error ? e.message : String(e));
 			}
-
-			// It had something on it after all. Say so rather than silently
-			// doing nothing, and put the guard back.
-			setDiscarding(false);
-			setKept(result.reason ?? "It was kept.");
 		});
 	}
 
@@ -212,15 +248,50 @@ export function NotesCapture({
 				{/*
           Pushed to the far end: backing out is a real need, but it is not
           what this screen is for.
+
+          Once there is work here, the first click asks rather than acts — and
+          says what will be lost, which a generic confirm dialogue cannot.
         */}
-				<button
-					type="button"
-					onClick={discard}
-					disabled={pending}
-					className={cn(buttonClass("ghost"), "ms-auto")}
-				>
-					Discard this draft
-				</button>
+				{confirmingDiscard ? (
+					<span className="ms-auto flex flex-wrap items-center gap-2">
+						<span className="text-sm text-ink">
+							Delete this draft
+							{materials.length > 0 && (
+								<>
+									{" "}
+									and {materials.length} uploaded file
+									{materials.length === 1 ? "" : "s"}
+								</>
+							)}
+							? This cannot be undone.
+						</span>
+						<button
+							type="button"
+							onClick={discard}
+							disabled={pending}
+							className={buttonClass("danger", "sm")}
+						>
+							{discarding ? "Deleting…" : "Yes, delete it"}
+						</button>
+						<button
+							type="button"
+							onClick={() => setConfirmingDiscard(false)}
+							disabled={pending}
+							className={buttonClass("secondary", "sm")}
+						>
+							Keep it
+						</button>
+					</span>
+				) : (
+					<button
+						type="button"
+						onClick={discard}
+						disabled={pending}
+						className={cn(buttonClass("ghost"), "ms-auto")}
+					>
+						Discard this draft
+					</button>
+				)}
 			</div>
 		</div>
 	);
