@@ -29,8 +29,21 @@ export function WorkflowActions({
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
-  function act(fn: () => Promise<void>) {
+  /*
+    Which action is in flight, not merely whether one is.
+
+    `useTransition` gives a single `pending` shared by every button here, so
+    while a delete ran the submit button also read as busy — the screen said
+    "Submitting…" and "Deleting…" at the same time and neither was trustworthy.
+    Naming the running action lets each button speak only for itself.
+  */
+  const [running, setRunning] = useState<"submit" | "fork" | "delete" | null>(
+    null,
+  );
+
+  function act(what: "submit" | "fork" | "delete", fn: () => Promise<void>) {
     setError(null);
+    setRunning(what);
     startTransition(async () => {
       try {
         await fn();
@@ -38,6 +51,7 @@ export function WorkflowActions({
         // A redirect throws by design; anything else is a real failure.
         if (e instanceof Error && e.message.includes("NEXT_REDIRECT")) throw e;
         setError(e instanceof Error ? e.message : String(e));
+        setRunning(null);
       }
     });
   }
@@ -101,10 +115,12 @@ export function WorkflowActions({
           <button
             type="button"
             disabled={pending}
-            onClick={() => act(() => forkProposal(proposal.id))}
+            onClick={() => act("fork", () => forkProposal(proposal.id))}
             className={buttonClass("secondary")}
           >
-            {pending ? "Creating…" : `Edit as version ${proposal.version + 1}`}
+            {running === "fork"
+              ? "Creating…"
+              : `Edit as version ${proposal.version + 1}`}
           </button>
         }
         error={error}
@@ -126,11 +142,11 @@ export function WorkflowActions({
         <button
           type="button"
           disabled={pending || Boolean(blockingReason)}
-          onClick={() => act(() => submitForReview(proposal.id))}
+          onClick={() => act("submit", () => submitForReview(proposal.id))}
           className={buttonClass("primary")}
         >
           <Icon name="send" className="h-4 w-4" />
-          {pending ? "Submitting…" : "Submit for review"}
+          {running === "submit" ? "Submitting…" : "Submit for review"}
         </button>
       }
       error={error}
@@ -167,10 +183,10 @@ export function WorkflowActions({
             <button
               type="button"
               disabled={pending}
-              onClick={() => act(() => deleteDraft(proposal.id))}
+              onClick={() => act("delete", () => deleteDraft(proposal.id))}
               className={buttonClass("danger", "sm")}
             >
-              {pending ? "Deleting…" : "Yes, delete it"}
+              {running === "delete" ? "Deleting…" : "Yes, delete it"}
             </button>
             <button
               type="button"

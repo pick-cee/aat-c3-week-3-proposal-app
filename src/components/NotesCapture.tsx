@@ -224,7 +224,10 @@ export function NotesCapture({
 						name="sparkle"
 						className={cn("h-4 w-4", pending && "animate-spin")}
 					/>
-					{pending ? "Reading your notes…" : "Read my notes"}
+					{/* `pending` is shared with the delete transition, so it must be
+					    narrowed here — otherwise deleting a draft makes this button
+					    claim it is reading the notes. */}
+					{pending && !discarding ? "Reading your notes…" : "Read my notes"}
 				</button>
 
 				{/*

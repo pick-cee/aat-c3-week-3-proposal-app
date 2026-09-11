@@ -193,6 +193,22 @@ Two further refusals, both about not breaking something else:
 `changes_requested` draft has one, so without this the delete would be refused
 by the foreign key. Nothing is lost that outlives the proposal it describes.
 
+**The rule is enforced twice, and both are wanted.** `proposals` originally had
+read, insert and update policies but no DELETE policy, and under RLS a missing
+policy denies the operation — which PostgREST reports as a successful statement
+affecting **zero rows**. So deletion returned without error and left the row
+exactly where it was. The worst failure mode available: the code looked right,
+the UI said it had worked, and the draft was still on the queue. The same shape
+as the missing `deliveries` insert policy — a read policy without its matching
+write policy denies by default, and the denial is silent.
+
+So `proposals_delete_own_draft` scopes deletion to the author and to
+`draft`/`changes_requested`, and `approvals_delete_with_own_draft` allows a
+decision row to go only as part of deleting the draft it belongs to. The API
+check stays as well: the policy guarantees no code path can delete an approved
+or sent proposal, while only the API can **explain** the refusal. A policy
+cannot say why.
+
 ### A superseded version cannot be sent
 
 Rule 5 says only an `approved` proposal can be sent. That is necessary and not
