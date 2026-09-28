@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { gateRequest } from "@/lib/gate/guard";
 
 /**
  * Refreshes the Supabase session cookie on every request.
@@ -12,6 +13,10 @@ import { NextResponse, type NextRequest } from "next/server";
  * Edge runtime, and that module is `server-only`.
  */
 export async function middleware(request: NextRequest) {
+  // The access gate comes first: without it, nothing below runs and nothing spends money.
+  const blocked = await gateRequest(request);
+  if (blocked) return blocked;
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
